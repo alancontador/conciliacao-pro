@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { FileUpload } from '@/components/import/FileUpload';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useAccountingStore } from '@/store/accounting';
@@ -9,92 +10,240 @@ import { CheckCircle, FileSpreadsheet } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import * as XLSX from 'xlsx';
 
+// ===== Tipos =====
+type LinhaRazao = {
+  id?: number;          // para paginação/keys
+  conta: string;
+  data: Date | null;
+  lote: string;
+  historico: string;
+  debito: number;
+  credito: number;
+  saldoExercicio: number;
+};
+
+// ===== Helpers (mesmos do seu parser tolerante) =====
+const normalize = (s: any): string => {
+  const map: Record<string, string> = {'Á':'A','À':'A','Â':'A','Ã':'A','É':'E','È':'E','Ê':'E','Í':'I','Ó':'O','Ò':'O','Ô':'O','Õ':'O','Ú':'U','Ù':'U','Ü':'U','Ç':'C'};
+  let t = (s ?? '').toString().toUpperCase().trim();
+  t = t.replace(/[ÁÀÂÃÉÈÊÍÓÒÔÕÚÙÜÇ]/g, (m)=>map[m]||m).replace(/\s{2,}/g, ' ');
+  return t;
+};
+const parseNumberBR = (v: any): number => {
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const s = v.toString().trim();
+  if (/^-?\d{1,3}(\.\d{3})*,\d{1,2}$/.test(s)) return parseFloat(s.replace(/\./g, '').replace(',', '.'));
+  if (/^-?\d{1,3}(,\d{3})*\.\d{1,2}$/.test(s)) return parseFloat(s.replace(/,/g, ''));
+  const n = Number(s.replace(',', '.'));
+  return Number.isFinite(n) ? n : 0;
+};
+const excelSerialToDate = (n: number): Date => new Date((n - 25569) * 86400 * 1000);
+const isValidDate = (d: Date | null) => !!d && !isNaN(d.getTime());
+const parseDateCell = (v: any): Date | null => {
+  if (v == null || v === '') return null;
+  if (v instanceof Date && !isNaN(v.getTime())) return v;
+  if (typeof v === 'number') { const d = excelSerialToDate(v); return isValidDate(d) ? d : null; }
+  const s = v.toString().trim();
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) { const dd=+m[1], mm=+m[2]-1, yy=+m[3]; const yyyy = yy<100?yy+2000:yy; const d=new Date(yyyy,mm,dd); return isValidDate(d)?d:null; }
+  const d = new Date(s); return isValidDate(d)?d:null;
+};
+const rowEmpty = (row: any[]) => !row || row.every(c => c == null || String(c).trim() === '');
+
+// “UsedRange” à esquerda
+const trimLeftEmptyColumns = (matrix: any[][], lookRows = 20) => {
+  const rows = matrix.slice(0, Math.min(lookRows, matrix.length));
+  let firstCol = Infinity;
+  for (const r of rows) {
+    if (!Array.isArray(r)) continue;
+    const idx = r.findIndex(v => v != null && String(v).trim() !== '');
+    if (idx >= 0) firstCol = Math.min(firstCol, idx);
+  }
+  if (!isFinite(firstCol) || firstCol <= 0) return { trimmed: matrix, offset: 0 };
+  return { trimmed: matrix.map(r => (Array.isArray(r) ? r.slice(firstCol) : r)), offset: firstCol };
+};
+
+// header por pontuação + fallback “CONSOLIDADO”
+const detectHeaderRow = (mat: any[][]): number => {
+  const maxScan = Math.min(15, mat.length);
+  let bestIdx = -1, bestScore = -1;
+  const tokens = ['DATA','HISTORICO','DEBITO','CREDITO','SALDO'];
+  const hasConsolidado = (mat[3] || []).some(c => normalize(c).includes('CONSOLIDADO'));
+  for (let i=0;i<maxScan;i++){
+    const row = mat[i] || [];
+    let score = 0;
+    for (const c of row) {
+      const n = normalize(c);
+      if (!n) continue;
+      for (const t of tokens) if (n.includes(t)) score++;
+    }
+    if (score > bestScore) { bestScore = score; bestIdx = i; }
+  }
+  if (hasConsolidado && mat[7]) {
+    const row8 = mat[7].map(normalize);
+    const s8 = row8.filter(x => tokens.some(t => x.includes(t))).length;
+    if (s8 >= Math.max(2, bestScore - 1)) return 7;
+  }
+  if (bestIdx < 0 || bestScore < 2) return Math.min(6, mat.length - 1);
+  return bestIdx;
+};
+
+// mapear colunas por nome/tipo + fallbacks C/E
+const mapColumnsSmart = (header: any[], sampleRows: any[][]) => {
+  const H = header.map(normalize);
+  const idx: Record<string, number|undefined> = {};
+  H.forEach((h,i)=>{
+    if (h.includes('DATA') && idx.DATA==null) idx.DATA=i;
+    if (h.includes('HISTORICO') && idx.HISTORICO==null) idx.HISTORICO=i;
+    if (h.includes('DEBITO') && idx.DEBITO==null) idx.DEBITO=i;
+    if (h.includes('CREDITO') && idx.CREDITO==null) idx.CREDITO=i;
+    if (h.replace(/\s/g,'').includes('SALDOEXERCICIO') && idx.SALDOEX==null) idx.SALDOEX=i;
+    if ((h.includes('LOTE')||h.includes('LANC')||h.includes('LANÇ')) && idx.LOTE==null) idx.LOTE=i;
+    if ((h.includes('CONTA')||h.includes('CONTA N')) && idx.CONTA==null) idx.CONTA=i;
+  });
+  const colCount = header.length;
+  const stats = Array.from({length: colCount}, (_,c)=>{
+    let dateHits=0,numHits=0,nonEmpty=0;
+    for (const r of sampleRows){
+      const v=r[c];
+      if (v!=null && String(v).trim()!==''){
+        nonEmpty++;
+        if (parseDateCell(v)) dateHits++;
+        const n=parseNumberBR(v); if (Number.isFinite(n)) numHits++;
+      }
+    }
+    return {c,dateHits,numHits,nonEmpty};
+  });
+  if (idx.DATA==null){
+    const cand = stats.filter(s=>s.nonEmpty>0 && s.dateHits/s.nonEmpty>=0.6)
+                      .sort((a,b)=>(b.dateHits/b.nonEmpty)-(a.dateHits/a.nonEmpty))[0];
+    if (cand) idx.DATA=cand.c;
+  }
+  const numericCols = stats.filter(s=>s.numHits/Math.max(1,s.nonEmpty)>=0.6).map(s=>s.c);
+  const preferByHeader = (needle:string)=> H.map((h,i)=>({i,h})).filter(x=>normalize(x.h).includes(needle)).map(x=>x.i);
+  const pickNumeric = (current:number|undefined, needles:string[])=>{
+    if (current!=null) return current;
+    for (const nd of needles){
+      const prefers = preferByHeader(nd).filter(i=>numericCols.includes(i));
+      if (prefers.length) return prefers[0];
+    }
+    return numericCols.find(c => c !== idx.DEBITO && c !== idx.CREDITO && c !== idx.SALDOEX);
+  };
+  idx.DEBITO  = pickNumeric(idx.DEBITO,  ['DEB']);
+  idx.CREDITO = pickNumeric(idx.CREDITO, ['CRED']);
+  if (idx.SALDOEX==null){
+    const prefers = preferByHeader('SALDO');
+    const cand = prefers.find(i=> i!==idx.DEBITO && i!==idx.CREDITO && numericCols.includes(i));
+    idx.SALDOEX = cand ?? numericCols.find(i => i!==idx.DEBITO && i!==idx.CREDITO);
+  }
+  if (idx.CONTA==null && header.length>2) idx.CONTA=2;
+  if (idx.LOTE==null  && header.length>4) idx.LOTE=4;
+  return idx as {DATA?:number;HISTORICO?:number;DEBITO?:number;CREDITO?:number;SALDOEX?:number;CONTA?:number;LOTE?:number;};
+};
+const looksLikeHeaderRepeat = (row:any[], idx:any)=>{
+  const toks:Array<[keyof typeof idx,string]> = [
+    ['DATA','DATA'],['HISTORICO','HISTORICO'],['DEBITO','DEBITO'],['CREDITO','CREDITO'],['SALDOEX','SALDOEXERCICIO']
+  ];
+  let hits=0;
+  for (const [k,t] of toks){
+    const i=idx[k]; if (i==null) continue;
+    if (normalize(row[i]??'').includes(normalize(t))) hits++;
+  }
+  return hits>=2;
+};
+const fillDownConta = (rows: LinhaRazao[]) => {
+  let last=''; for (const r of rows){ if (!r.conta) r.conta=last; else last=r.conta; }
+};
+
+// ===== parser principal =====
+const processWorkbook = (wb: XLSX.WorkBook) => {
+  const sheetName = wb.SheetNames[0];
+  const sh = wb.Sheets[sheetName];
+  const raw: any[][] = XLSX.utils.sheet_to_json(sh, { header: 1, raw: true, blankrows: false }) as any[][];
+  if (!raw.length) return { rows: [] as LinhaRazao[], totalRaw: 0 };
+
+  const { trimmed } = trimLeftEmptyColumns(raw, 20);
+  const headerIdx = detectHeaderRow(trimmed);
+  const header = trimmed[headerIdx] || [];
+  const body = trimmed.slice(headerIdx + 1);
+
+  const idx = mapColumnsSmart(header, body.slice(0, 50));
+
+  const out: LinhaRazao[] = [];
+  for (const row of body) {
+    if (rowEmpty(row)) continue;
+    if (looksLikeHeaderRepeat(row, idx)) continue;
+
+    const vData = idx.DATA != null ? row[idx.DATA] : undefined;
+    if (idx.DATA != null) {
+      const d = parseDateCell(vData);
+      if (!isValidDate(d)) continue;
+    }
+
+    const r: LinhaRazao = {
+      conta: idx.CONTA!=null ? String(row[idx.CONTA] ?? '').trim() : '',
+      data:  idx.DATA !=null ? parseDateCell(vData) : null,
+      lote:  idx.LOTE !=null ? String(row[idx.LOTE] ?? '').trim() : '',
+      historico: idx.HISTORICO!=null ? String(row[idx.HISTORICO] ?? '').trim() : '',
+      debito: idx.DEBITO!=null ? parseNumberBR(row[idx.DEBITO]) : 0,
+      credito: idx.CREDITO!=null ? parseNumberBR(row[idx.CREDITO]) : 0,
+      saldoExercicio: idx.SALDOEX!=null ? parseNumberBR(row[idx.SALDOEX]) : 0,
+    };
+    out.push(r);
+  }
+
+  if (out.length > 2) out.splice(out.length - 2, 2);
+  fillDownConta(out);
+
+  // anexa ids para paginação
+  out.forEach((r, i) => { r.id = i; });
+
+  return { rows: out, totalRaw: raw.length };
+};
+
+// ===== Componente =====
 export function ImportRazao() {
   const [file, setFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [previewData, setPreviewData] = useState<any[]>([]);
+  const [previewData, setPreviewData] = useState<LinhaRazao[]>([]);
   const [importStats, setImportStats] = useState<{
-    totalLines: number;
-    validLines: number;
-    ignoredLines: number;
-    errors: string[];
+    totalLines: number; validLines: number; ignoredLines: number; errors: string[];
   } | null>(null);
+
+  // paginação (igual ao balancete)
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  useEffect(() => { setCurrentPage(1); }, [previewData, pageSize]);
+  const totalPages = Math.max(1, Math.ceil(previewData.length / pageSize));
+  const startIdx = (currentPage - 1) * pageSize;
+  const endIdx = Math.min(startIdx + pageSize, previewData.length);
+  const pageRows = useMemo(() => previewData.slice(startIdx, endIdx), [previewData, startIdx, endIdx]);
 
   const { setRazaoData, addImportHistory } = useAccountingStore();
   const { toast } = useToast();
-
-  const isRowEmpty = (row: any[]): boolean => {
-    return !row || row.every(cell => !cell || cell.toString().trim() === '');
-  };
 
   const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile);
     setPreviewData([]);
     setImportStats(null);
-    
     try {
       setIsLoading(true);
-      
-      const arrayBuffer = await selectedFile.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+      const buf = await selectedFile.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: false, cellText: false });
+      const { rows, totalRaw } = processWorkbook(wb);
 
-      // Remove completely empty rows and clean data
-      const cleanedData = rawData
-        .filter((row: any) => !isRowEmpty(row))
-        .slice(1) // Skip header
-        .filter((row: any) => {
-          // Basic validation for razão data
-          return row.length >= 6 && 
-                 row[0] && // Has account
-                 row[1] && // Has date
-                 row[4] !== undefined && // Has debit
-                 row[5] !== undefined; // Has credit
-        })
-        .map((row: any, index: number) => {
-          const dateValue = row[1];
-          let parsedDate = new Date();
-          
-          // Try to parse different date formats
-          if (dateValue) {
-            if (typeof dateValue === 'number') {
-              // Excel serial date
-              parsedDate = new Date((dateValue - 25569) * 86400 * 1000);
-            } else {
-              parsedDate = new Date(dateValue);
-            }
-          }
-
-          return {
-            id: index,
-            conta: row[0]?.toString() || '',
-            data: parsedDate,
-            lote: row[2]?.toString() || '',
-            historico: row[3]?.toString() || '',
-            debito: parseFloat(row[4]) || 0,
-            credito: parseFloat(row[5]) || 0,
-            saldoExercicio: parseFloat(row[6]) || 0,
-          };
-        });
-
-      setPreviewData(cleanedData.slice(0, 10)); // Show first 10 for preview
-      
+      // >>> guarda TODAS as linhas; a paginação cuida do corte
+      setPreviewData(rows);
       setImportStats({
-        totalLines: rawData.length - 1,
-        validLines: cleanedData.length,
-        ignoredLines: (rawData.length - 1) - cleanedData.length,
+        totalLines: Math.max(totalRaw - 1, 0),
+        validLines: rows.length,
+        ignoredLines: Math.max(0, (totalRaw - 1) - rows.length),
         errors: [],
       });
-
-    } catch (error) {
-      console.error('Error processing file:', error);
-      toast({
-        title: 'Erro ao processar arquivo',
-        description: 'Verifique se o arquivo está no formato correto.',
-        variant: 'destructive',
-      });
+    } catch (e) {
+      console.error(e);
+      toast({ title: 'Erro ao processar arquivo', description: 'Cheque o layout e tente novamente.', variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
@@ -102,146 +251,116 @@ export function ImportRazao() {
 
   const handleImport = async () => {
     if (!file || !importStats) return;
-
     try {
       setIsLoading(true);
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: false, cellText: false });
+      const { rows, totalRaw } = processWorkbook(wb);
 
-      const arrayBuffer = await file.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-
-      const processedData = rawData
-        .filter((row: any) => !isRowEmpty(row))
-        .slice(1)
-        .filter((row: any) => {
-          return row.length >= 6 && 
-                 row[0] && 
-                 row[1] && 
-                 row[4] !== undefined && 
-                 row[5] !== undefined;
-        })
-        .map((row: any) => {
-          const dateValue = row[1];
-          let parsedDate = new Date();
-          
-          if (dateValue) {
-            if (typeof dateValue === 'number') {
-              parsedDate = new Date((dateValue - 25569) * 86400 * 1000);
-            } else {
-              parsedDate = new Date(dateValue);
-            }
-          }
-
-          return {
-            conta: row[0]?.toString() || '',
-            data: parsedDate,
-            lote: row[2]?.toString() || '',
-            historico: row[3]?.toString() || '',
-            debito: parseFloat(row[4]) || 0,
-            credito: parseFloat(row[5]) || 0,
-            saldoExercicio: parseFloat(row[6]) || 0,
-          };
-        });
-
-      setRazaoData(processedData);
-      
+      setRazaoData(rows);
       addImportHistory({
         id: Date.now().toString(),
         tipo: 'RAZAO',
         arquivo: file.name,
         data: new Date(),
         usuario: 'Sistema',
-        linhasLidas: importStats.totalLines,
-        linhasIgnoradas: importStats.ignoredLines,
+        linhasLidas: Math.max(totalRaw - 1, 0),
+        linhasIgnoradas: Math.max(0, (totalRaw - 1) - rows.length),
         erros: [],
         status: 'SUCESSO',
       });
 
-      toast({
-        title: 'Importação realizada com sucesso!',
-        description: `${processedData.length} movimentações foram importadas do razão.`,
-      });
-
-      // Reset form
-      setFile(null);
-      setPreviewData([]);
-      setImportStats(null);
-
-    } catch (error) {
-      console.error('Error importing data:', error);
-      toast({
-        title: 'Erro na importação',
-        description: 'Não foi possível importar os dados. Tente novamente.',
-        variant: 'destructive',
-      });
+      toast({ title: 'Importação realizada com sucesso!', description: `${rows.length} movimentações foram importadas do razão.` });
+      setFile(null); setPreviewData([]); setImportStats(null);
+    } catch (e) {
+      console.error(e);
+      toast({ title: 'Erro na importação', description: 'Não foi possível importar os dados.', variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
   };
 
+  // helpers UI paginação (igual ao balancete)
+  const goPrev = () => setCurrentPage(p => Math.max(1, p - 1));
+  const goNext = () => setCurrentPage(p => Math.min(totalPages, p + 1));
+  const goTo = (p: number) => setCurrentPage(() => {
+    if (!Number.isFinite(p)) return 1;
+    return Math.min(totalPages, Math.max(1, Math.trunc(p)));
+  });
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-foreground">Importar Razão</h1>
-        <p className="text-muted-foreground">
-          Importe as movimentações do razão contábil a partir de arquivos Excel (.xlsx, .xls)
-        </p>
+        <p className="text-muted-foreground">Importe as movimentações do razão contábil a partir de arquivos Excel (.xlsx, .xls)</p>
       </div>
 
-      {/* File Upload */}
       <Card>
         <CardHeader>
           <CardTitle>Selecionar Arquivo</CardTitle>
-          <CardDescription>
-            Carregue o arquivo Excel contendo as movimentações do razão
-          </CardDescription>
+          <CardDescription>Carregue o arquivo Excel contendo as movimentações do razão</CardDescription>
         </CardHeader>
         <CardContent>
-          <FileUpload
-            onFileSelect={handleFileSelect}
-            isLoading={isLoading}
-          />
+          <FileUpload onFileSelect={handleFileSelect} isLoading={isLoading} />
         </CardContent>
       </Card>
 
-      {/* Import Stats */}
       {importStats && (
         <Alert>
           <CheckCircle className="h-4 w-4" />
           <AlertDescription>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2">
-              <div>
-                <div className="font-medium">Total de linhas</div>
-                <div className="text-2xl font-bold">{importStats.totalLines}</div>
-              </div>
-              <div>
-                <div className="font-medium">Linhas válidas</div>
-                <div className="text-2xl font-bold text-success">{importStats.validLines}</div>
-              </div>
-              <div>
-                <div className="font-medium">Linhas ignoradas</div>
-                <div className="text-2xl font-bold text-muted-foreground">{importStats.ignoredLines}</div>
-              </div>
-              <div>
-                <div className="font-medium">Erros</div>
-                <div className="text-2xl font-bold text-destructive">{importStats.errors.length}</div>
-              </div>
+              <div><div className="font-medium">Total de linhas</div><div className="text-2xl font-bold">{importStats.totalLines}</div></div>
+              <div><div className="font-medium">Linhas válidas</div><div className="text-2xl font-bold text-success">{importStats.validLines}</div></div>
+              <div><div className="font-medium">Linhas ignoradas</div><div className="text-2xl font-bold text-muted-foreground">{importStats.ignoredLines}</div></div>
+              <div><div className="font-medium">Erros</div><div className="text-2xl font-bold text-destructive">{importStats.errors.length}</div></div>
             </div>
           </AlertDescription>
         </Alert>
       )}
 
-      {/* Preview */}
       {previewData.length > 0 && (
         <Card>
-          <CardHeader>
+          <CardHeader className="space-y-2">
             <CardTitle className="flex items-center gap-2">
               <FileSpreadsheet className="w-5 h-5" />
-              Preview dos Dados (primeiras 10 linhas)
+              Preview dos Dados
             </CardTitle>
+
+            {/* Barra de paginação superior (igual balancete) */}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm text-muted-foreground">
+                Mostrando <b>{previewData.length === 0 ? 0 : startIdx + 1}</b>–<b>{endIdx}</b> de <b>{previewData.length}</b>
+              </span>
+
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={goPrev} disabled={currentPage <= 1}>Anterior</Button>
+                <span className="text-sm">Página</span>
+                <Input
+                  type="number"
+                  className="h-8 w-16"
+                  value={currentPage}
+                  min={1}
+                  max={totalPages}
+                  onChange={(e) => goTo(parseInt(e.target.value))}
+                />
+                <span className="text-sm">de {totalPages}</span>
+                <Button variant="outline" size="sm" onClick={goNext} disabled={currentPage >= totalPages}>Próxima</Button>
+              </div>
+
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-sm">Linhas por página</span>
+                <select
+                  className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                  value={pageSize}
+                  onChange={(e) => setPageSize(parseInt(e.target.value))}
+                >
+                  {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+            </div>
           </CardHeader>
+
           <CardContent>
             <div className="overflow-x-auto">
               <Table>
@@ -257,25 +376,15 @@ export function ImportRazao() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {previewData.map((row, index) => (
-                    <TableRow key={index}>
+                  {pageRows.map((row) => (
+                    <TableRow key={row.id}>
                       <TableCell className="font-mono">{row.conta}</TableCell>
-                      <TableCell>
-                        {row.data.toLocaleDateString('pt-BR')}
-                      </TableCell>
+                      <TableCell>{row.data ? row.data.toLocaleDateString('pt-BR') : ''}</TableCell>
                       <TableCell>{row.lote}</TableCell>
-                      <TableCell className="max-w-xs truncate">
-                        {row.historico}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        R$ {row.debito.toLocaleString('pt-BR')}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        R$ {row.credito.toLocaleString('pt-BR')}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        R$ {row.saldoExercicio.toLocaleString('pt-BR')}
-                      </TableCell>
+                      <TableCell className="max-w-xs truncate">{row.historico}</TableCell>
+                      <TableCell className="text-right">R$ {row.debito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</TableCell>
+                      <TableCell className="text-right">R$ {row.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</TableCell>
+                      <TableCell className="text-right">R$ {row.saldoExercicio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -283,11 +392,7 @@ export function ImportRazao() {
             </div>
 
             <div className="flex justify-end mt-4">
-              <Button 
-                onClick={handleImport} 
-                disabled={isLoading}
-                className="min-w-32"
-              >
+              <Button onClick={handleImport} disabled={isLoading} className="min-w-32">
                 {isLoading ? 'Importando...' : 'Confirmar Importação'}
               </Button>
             </div>
