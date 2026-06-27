@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileUpload } from '@/components/import/FileUpload';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -118,6 +118,7 @@ export function ImportBalancete() {
   const [isLoading, setIsLoading] = useState(false);
   const [previewData, setPreviewData] = useState<LinhaPreview[]>([]);
   const [minCharacters, setMinCharacters] = useState(1);
+  const rawDataRef = useRef<any[][] | null>(null);
   const [importStats, setImportStats] = useState<{
     totalLines: number;
     validLines: number;
@@ -128,7 +129,22 @@ export function ImportBalancete() {
   // paginação
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  useEffect(() => { setCurrentPage(1); }, [previewData, pageSize]); // reset ao trocar dados/tamanho
+  useEffect(() => { setCurrentPage(1); }, [previewData, pageSize]);
+
+  // Refiltra o preview quando o usuário muda minCharacters sem re-fazer upload
+  useEffect(() => {
+    if (!rawDataRef.current) return;
+    const processed = extractRowsFromLayout(rawDataRef.current, minCharacters, true);
+    setPreviewData(processed);
+    const hdrIdx = findHeaderIndex(rawDataRef.current);
+    const dataLen = hdrIdx === -1 ? 0 : Math.max(rawDataRef.current.length - (hdrIdx + 1), 0);
+    setImportStats(prev => prev === null ? null : {
+      totalLines: dataLen,
+      validLines: processed.length,
+      ignoredLines: dataLen - processed.length,
+      errors: [],
+    });
+  }, [minCharacters]);
 
   const totalPages = Math.max(1, Math.ceil(previewData.length / pageSize));
   const startIdx = (currentPage - 1) * pageSize;
@@ -161,9 +177,10 @@ export function ImportBalancete() {
         raw: true,
       });
 
+      rawDataRef.current = rawData;
+
       const processedForPreview = extractRowsFromLayout(rawData, minCharacters, true);
 
-      // >>> agora guardamos TODAS as linhas (paginação cuida do slice)
       setPreviewData(processedForPreview);
 
       const hdrIdx = findHeaderIndex(rawData);

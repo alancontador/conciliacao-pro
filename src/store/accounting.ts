@@ -65,11 +65,51 @@ export const useAccountingStore = create<AccountingState>()(
         })),
 
       calculateKPIs: () => {
-        const { contas } = get();
-        const totalContas = contas.length;
-        const contasConciliadas = contas.filter(c => c.status === 'CONCILIADO').length;
-        const contasPendentes = contas.filter(c => c.status === 'NAO_CONCILIADO').length;
-        const contasAlerta = contas.filter(c => {
+        const { contas, balanceteData, razaoData } = get();
+
+        let effectiveContas = contas;
+        if (contas.length === 0 && balanceteData.length > 0) {
+          effectiveContas = balanceteData.map(balancete => {
+            const movimentacoes = razaoData
+              .filter(r => r.conta.trim() === balancete.codigo.trim())
+              .map((r, i) => ({
+                id: `${balancete.codigo}-${i}`,
+                data: r.data,
+                lote: r.lote,
+                historico: r.historico,
+                debito: r.debito,
+                credito: r.credito,
+                saldoExercicio: r.saldoExercicio,
+              }));
+
+            const composicao = movimentacoes.reduce(
+              (acc, m) => balancete.natureza === 'ATIVO'
+                ? acc + m.debito - m.credito
+                : acc + m.credito - m.debito,
+              0,
+            );
+            const diferenca = balancete.saldoAtual - composicao;
+
+            return {
+              numero: balancete.codigo,
+              descricao: balancete.descricao,
+              natureza: balancete.natureza,
+              contabilidade: balancete.saldoAtual,
+              composicao,
+              diferenca,
+              status: (Math.abs(diferenca) < 0.01 ? 'CONCILIADO' : 'NAO_CONCILIADO') as Conta['status'],
+              documentos: [],
+              movimentacoes,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            };
+          });
+        }
+
+        const totalContas = effectiveContas.length;
+        const contasConciliadas = effectiveContas.filter(c => c.status === 'CONCILIADO').length;
+        const contasPendentes = effectiveContas.filter(c => c.status === 'NAO_CONCILIADO').length;
+        const contasAlerta = effectiveContas.filter(c => {
           if (!c.prazoRegularizacao) return false;
           return new Date() > c.prazoRegularizacao;
         }).length;
@@ -80,7 +120,7 @@ export const useAccountingStore = create<AccountingState>()(
           contasPendentes,
           percentualConciliacao: totalContas > 0 ? (contasConciliadas / totalContas) * 100 : 0,
           contasAlerta,
-          prazoMedioRegularizacao: 15, // Placeholder calculation
+          prazoMedioRegularizacao: 15,
         };
       },
 

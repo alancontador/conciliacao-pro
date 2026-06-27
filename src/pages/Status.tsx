@@ -22,7 +22,7 @@ import type { Conta } from '@/types/accounting';
 import * as XLSX from 'xlsx';
 
 export function Status() {
-  const { contas, balanceteData, razaoData, reconcileAccount } = useAccountingStore();
+  const { contas, balanceteData, razaoData, reconcileAccount, setContas } = useAccountingStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [naturezaFilter, setNaturezaFilter] = useState<string>('all');
@@ -36,8 +36,8 @@ export function Status() {
 
     // Create accounts from balancete and calculate compositions from razão
     return balanceteData.map(balancete => {
-      const movimentacoes = razaoData.filter(razao => 
-        razao.conta === balancete.codigo
+      const movimentacoes = razaoData.filter(razao =>
+        razao.conta.trim() === balancete.codigo.trim()
       ).map((razao, index) => ({
         id: `${balancete.codigo}-${index}`,
         data: razao.data,
@@ -48,9 +48,11 @@ export function Status() {
         saldoExercicio: razao.saldoExercicio,
       }));
 
-      // Calculate composition (sum of movements)
+      // ATIVO: saldo devedor (D-C); PASSIVO: saldo credor (C-D)
       const composicao = movimentacoes.reduce((acc, mov) => {
-        return acc + mov.debito - mov.credito;
+        return balancete.natureza === 'ATIVO'
+          ? acc + mov.debito - mov.credito
+          : acc + mov.credito - mov.debito;
       }, 0);
 
       const diferenca = balancete.saldoAtual - composicao;
@@ -129,6 +131,9 @@ export function Status() {
   };
 
   const handleReconcile = (numero: string, status: Conta['status']) => {
+    if (contas.length === 0) {
+      setContas(processedContas);
+    }
     reconcileAccount(numero, status);
     toast({
       title: 'Status atualizado',

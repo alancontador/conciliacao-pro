@@ -193,7 +193,18 @@ const processWorkbook = (wb: XLSX.WorkBook) => {
     out.push(r);
   }
 
-  if (out.length > 2) out.splice(out.length - 2, 2);
+  // Remove linhas de rodapé comuns em razões (totais/resumos no final)
+  while (out.length > 0) {
+    const last = out[out.length - 1];
+    const hist = normalize(last.historico);
+    const isSummary =
+      hist.includes('TOTAL') ||
+      hist.includes('SALDO GERAL') ||
+      hist.includes('ENCERRAMENT') ||
+      (!last.lote && hist.startsWith('SALDO'));
+    if (isSummary) out.pop();
+    else break;
+  }
   fillDownConta(out);
 
   // anexa ids para paginação

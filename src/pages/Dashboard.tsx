@@ -15,16 +15,16 @@ import {
 import { Link } from 'react-router-dom';
 
 export function Dashboard() {
-  const { contas, calculateKPIs } = useAccountingStore();
+  const { contas, balanceteData, calculateKPIs } = useAccountingStore();
   const kpis = calculateKPIs();
 
   const chartData = {
-    conciliadas: contas.filter(c => c.status === 'CONCILIADO').length,
-    pendentes: contas.filter(c => c.status === 'NAO_CONCILIADO').length,
-    emAnalise: contas.filter(c => c.status === 'EM_ANALISE').length,
+    conciliadas: kpis.contasConciliadas,
+    pendentes: kpis.contasPendentes,
+    emAnalise: kpis.totalContas - kpis.contasConciliadas - kpis.contasPendentes,
   };
 
-  const hasData = contas.length > 0;
+  const hasData = contas.length > 0 || balanceteData.length > 0;
 
   if (!hasData) {
     return (
@@ -160,7 +160,12 @@ export function Dashboard() {
                   </div>
                 ))}
                 
-              {contas.length === 0 && (
+              {contas.length === 0 && balanceteData.length > 0 && (
+                <p className="text-center text-muted-foreground py-8">
+                  Acesse <strong>Status das Contas</strong> para ver os detalhes
+                </p>
+              )}
+              {contas.length === 0 && balanceteData.length === 0 && (
                 <p className="text-center text-muted-foreground py-8">
                   Nenhuma conta requer atenção no momento
                 </p>

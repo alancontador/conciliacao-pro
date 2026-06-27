@@ -38,6 +38,9 @@ export interface BalanceteRow {
   codigo: string;
   classificacao: string;
   descricao: string;
+  saldoAnterior: number;
+  debito: number;
+  credito: number;
   saldoAtual: number;
   natureza: 'ATIVO' | 'PASSIVO';
 }
