@@ -156,6 +156,67 @@ const fillDownConta = (rows: LinhaRazao[]) => {
   let last=''; for (const r of rows){ if (!r.conta) r.conta=last; else last=r.conta; }
 };
 
+// ===== parser CSV (layout fixo Windows-1252, separador ";") =====
+// Colunas: data=0, lote=4, histórico=10, cta.c.part=20, débito=22, crédito=24, saldo=29
+// Linha de conta: col 0 = "Conta:", col 9 = código da conta
+const readAsWindows1252 = (file: File): Promise<string> =>
+  file.arrayBuffer().then(buf => {
+    try { return new TextDecoder('windows-1252').decode(buf); }
+    catch { return new TextDecoder('utf-8').decode(buf); }
+  });
+
+const processCSV = (text: string): { rows: LinhaRazao[]; totalRaw: number } => {
+  const lines = text.split(/\r?\n/);
+  const out: LinhaRazao[] = [];
+  let currentConta = '';
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const cols = line.split(';');
+    const col0 = (cols[0] ?? '').trim().toUpperCase();
+
+    // Linha de definição de conta
+    if (col0 === 'CONTA:') {
+      currentConta = (cols[9] ?? '').trim();
+      continue;
+    }
+
+    // Linhas de resumo/cabeçalho a ignorar
+    const lineUpper = line.toUpperCase();
+    if (
+      lineUpper.includes('SALDO ANTERIOR') ||
+      lineUpper.includes('TOTAL DO M') ||
+      lineUpper.includes('SALDO GERAL') ||
+      lineUpper.includes('ENCERRAMENT') ||
+      col0 === 'DATA' ||
+      col0 === 'RAZ' ||
+      col0.startsWith('RAZ\xC3') || // RAZÃO com encoding
+      col0 === 'EMPRESA:' ||
+      col0 === 'C.N.P.J.:' ||
+      col0.startsWith('PER') ||
+      col0 === 'FOLHA:'
+    ) {
+      continue;
+    }
+
+    // Linha de transação: col 0 deve ser data válida
+    const data = parseDateCell((cols[0] ?? '').trim());
+    if (!isValidDate(data)) continue;
+
+    const lote = (cols[4] ?? '').trim();
+    const historico = (cols[10] ?? '').trim();
+    const debito = parseNumberBR((cols[22] ?? '').trim());
+    const credito = parseNumberBR((cols[24] ?? '').trim());
+    const saldoRaw = (cols[29] ?? '').trim().replace(/[dDcC]$/, '');
+    const saldoExercicio = parseNumberBR(saldoRaw);
+
+    out.push({ conta: currentConta, data: data as Date, lote, historico, debito, credito, saldoExercicio });
+  }
+
+  out.forEach((r, i) => { r.id = i; });
+  return { rows: out, totalRaw: lines.length };
+};
+
 // ===== parser principal =====
 const processWorkbook = (wb: XLSX.WorkBook) => {
   const sheetName = wb.SheetNames[0];
@@ -240,11 +301,19 @@ export function ImportRazao() {
     setImportStats(null);
     try {
       setIsLoading(true);
-      const buf = await selectedFile.arrayBuffer();
-      const wb = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: false, cellText: false });
-      const { rows, totalRaw } = processWorkbook(wb);
+      const isCsv = selectedFile.name.toLowerCase().endsWith('.csv');
+      let rows: LinhaRazao[];
+      let totalRaw: number;
 
-      // >>> guarda TODAS as linhas; a paginação cuida do corte
+      if (isCsv) {
+        const text = await readAsWindows1252(selectedFile);
+        ({ rows, totalRaw } = processCSV(text));
+      } else {
+        const buf = await selectedFile.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: false, cellText: false });
+        ({ rows, totalRaw } = processWorkbook(wb));
+      }
+
       setPreviewData(rows);
       setImportStats({
         totalLines: Math.max(totalRaw - 1, 0),
@@ -264,9 +333,18 @@ export function ImportRazao() {
     if (!file || !importStats) return;
     try {
       setIsLoading(true);
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: false, cellText: false });
-      const { rows, totalRaw } = processWorkbook(wb);
+      const isCsv = file.name.toLowerCase().endsWith('.csv');
+      let rows: LinhaRazao[];
+      let totalRaw: number;
+
+      if (isCsv) {
+        const text = await readAsWindows1252(file);
+        ({ rows, totalRaw } = processCSV(text));
+      } else {
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: false, cellText: false });
+        ({ rows, totalRaw } = processWorkbook(wb));
+      }
 
       setRazaoData(rows);
       addImportHistory({
@@ -312,7 +390,7 @@ export function ImportRazao() {
           <CardDescription>Carregue o arquivo Excel contendo as movimentações do razão</CardDescription>
         </CardHeader>
         <CardContent>
-          <FileUpload onFileSelect={handleFileSelect} isLoading={isLoading} />
+          <FileUpload onFileSelect={handleFileSelect} isLoading={isLoading} allowCsv />
         </CardContent>
       </Card>
 

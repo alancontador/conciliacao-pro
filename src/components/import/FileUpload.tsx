@@ -11,31 +11,36 @@ interface FileUploadProps {
   maxSize?: number;
   isLoading?: boolean;
   error?: string;
+  allowCsv?: boolean;
 }
 
-export function FileUpload({ 
-  onFileSelect, 
-  accept = ['.xlsx', '.xls'], 
+export function FileUpload({
+  onFileSelect,
+  accept = ['.xlsx', '.xls'],
   maxSize = 10 * 1024 * 1024,
   isLoading = false,
-  error 
+  error,
+  allowCsv = false,
 }: FileUploadProps) {
   const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: any[]) => {
     if (rejectedFiles.length > 0) {
       return;
     }
-    
+
     if (acceptedFiles.length > 0) {
       onFileSelect(acceptedFiles[0]);
     }
   }, [onFileSelect]);
 
+  const acceptedTypes: Record<string, string[]> = {
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+    'application/vnd.ms-excel': ['.xls'],
+    ...(allowCsv ? { 'text/csv': ['.csv'], 'application/csv': ['.csv'] } : {}),
+  };
+
   const { getRootProps, getInputProps, isDragActive, fileRejections } = useDropzone({
     onDrop,
-    accept: {
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-      'application/vnd.ms-excel': ['.xls'],
-    },
+    accept: acceptedTypes,
     maxSize,
     maxFiles: 1,
     disabled: isLoading,
@@ -88,7 +93,7 @@ export function FileUpload({
               </h3>
               
               <p className="text-sm text-muted-foreground mb-4">
-                Formatos aceitos: .xlsx, .xls (máx. {(maxSize / (1024 * 1024)).toFixed(0)}MB)
+                Formatos aceitos: .xlsx, .xls{allowCsv ? ', .csv' : ''} (máx. {(maxSize / (1024 * 1024)).toFixed(0)}MB)
               </p>
 
               {!isLoading && (
