@@ -6,12 +6,13 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Search, 
-  Filter, 
-  Download, 
-  Eye, 
-  CheckCircle, 
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import {
+  Search,
+  Filter,
+  Download,
+  Eye,
+  CheckCircle,
   AlertTriangle,
   FileText,
   Clock,
@@ -26,6 +27,7 @@ export function Status() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [naturezaFilter, setNaturezaFilter] = useState<string>('all');
+  const [selectedConta, setSelectedConta] = useState<Conta | null>(null);
   const { toast } = useToast();
 
   // Generate accounts from imported data if contas is empty
@@ -226,6 +228,73 @@ export function Status() {
         </CardContent>
       </Card>
 
+      {/* Sheet de lançamentos da conta */}
+      <Sheet open={!!selectedConta} onOpenChange={(open) => { if (!open) setSelectedConta(null); }}>
+        <SheetContent side="right" className="w-full sm:max-w-3xl overflow-y-auto">
+          {selectedConta && (
+            <>
+              <SheetHeader className="mb-4">
+                <SheetTitle className="font-mono">{selectedConta.numero} — {selectedConta.descricao}</SheetTitle>
+                <SheetDescription asChild>
+                  <div className="flex flex-wrap gap-4 text-sm mt-2">
+                    <span>Natureza: <strong>{selectedConta.natureza}</strong></span>
+                    <span>Contabilidade: <strong className="font-mono">R$ {selectedConta.contabilidade.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></span>
+                    <span>Composição: <strong className="font-mono">R$ {selectedConta.composicao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></span>
+                    <span className={Math.abs(selectedConta.diferenca) < 0.01 ? 'text-success' : 'text-destructive'}>
+                      Diferença: <strong className="font-mono">R$ {selectedConta.diferenca.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                    </span>
+                  </div>
+                </SheetDescription>
+              </SheetHeader>
+
+              {selectedConta.movimentacoes.length === 0 ? (
+                <p className="text-muted-foreground text-center py-8">Nenhum lançamento encontrado para esta conta.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <p className="text-sm text-muted-foreground mb-2">{selectedConta.movimentacoes.length} lançamento(s)</p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Data</TableHead>
+                        <TableHead>Lote</TableHead>
+                        <TableHead>Histórico</TableHead>
+                        <TableHead className="text-right">Débito</TableHead>
+                        <TableHead className="text-right">Crédito</TableHead>
+                        <TableHead className="text-right">Saldo</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedConta.movimentacoes.map((mov) => (
+                        <TableRow key={mov.id}>
+                          <TableCell className="whitespace-nowrap">
+                            {mov.data instanceof Date
+                              ? mov.data.toLocaleDateString('pt-BR')
+                              : new Date(mov.data).toLocaleDateString('pt-BR')}
+                          </TableCell>
+                          <TableCell className="font-mono">{mov.lote}</TableCell>
+                          <TableCell className="max-w-xs">
+                            <div className="truncate" title={mov.historico}>{mov.historico}</div>
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {mov.debito > 0 ? `R$ ${mov.debito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {mov.credito > 0 ? `R$ ${mov.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            R$ {mov.saldoExercicio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+
       {/* Accounts Table */}
       <Card>
         <CardContent className="p-0">
@@ -291,7 +360,7 @@ export function Status() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="sm">
+                        <Button variant="ghost" size="sm" onClick={() => setSelectedConta(conta)}>
                           <Eye className="w-4 h-4" />
                         </Button>
                         
