@@ -175,9 +175,9 @@ const processCSV = (text: string): { rows: LinhaRazao[]; totalRaw: number } => {
     const cols = line.split(';');
     const col0 = (cols[0] ?? '').trim().toUpperCase();
 
-    // Linha de definição de conta
+    // Linha de definição de conta — col 2 contém o código reduzido que bate com balancete.codigo
     if (col0 === 'CONTA:') {
-      currentConta = (cols[9] ?? '').trim();
+      currentConta = (cols[2] ?? '').trim();
       continue;
     }
 
