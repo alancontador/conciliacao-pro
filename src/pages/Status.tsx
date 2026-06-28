@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   Search,
   Filter,
@@ -236,72 +236,90 @@ export function Status() {
         </CardContent>
       </Card>
 
-      {/* Sheet de lançamentos da conta */}
-      <Sheet open={!!selectedConta} onOpenChange={(open) => { if (!open) setSelectedConta(null); }}>
-        <SheetContent side="right" className="w-full sm:max-w-3xl overflow-y-auto">
+      {/* Dialog de lançamentos da conta */}
+      <Dialog open={!!selectedConta} onOpenChange={(open) => { if (!open) setSelectedConta(null); }}>
+        <DialogContent className="max-w-[95vw] w-[95vw] max-h-[90vh] flex flex-col p-0">
           {selectedConta && (
             <>
-              <SheetHeader className="mb-4">
-                <SheetTitle className="font-mono">{selectedConta.numero} — {selectedConta.descricao}</SheetTitle>
-                <SheetDescription asChild>
-                  <div className="flex flex-wrap gap-4 text-sm mt-2">
-                    <span>Natureza: <strong>{selectedConta.natureza}</strong></span>
-                    <span>Contabilidade: <strong className="font-mono">R$ {selectedConta.contabilidade.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></span>
-                    <span>Composição: <strong className="font-mono">R$ {selectedConta.composicao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></span>
-                    <span className={Math.abs(selectedConta.diferenca) < 0.01 ? 'text-success' : 'text-destructive'}>
-                      Diferença: <strong className="font-mono">R$ {selectedConta.diferenca.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
-                    </span>
+              {/* Cabeçalho fixo */}
+              <DialogHeader className="px-8 pt-8 pb-4 border-b shrink-0">
+                <DialogTitle className="text-xl font-mono">
+                  {selectedConta.numero} — {selectedConta.descricao}
+                </DialogTitle>
+                <DialogDescription asChild>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                    <div className="bg-muted rounded-lg p-3">
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Natureza</p>
+                      <p className="font-semibold">{selectedConta.natureza}</p>
+                    </div>
+                    <div className="bg-muted rounded-lg p-3">
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Contabilidade</p>
+                      <p className="font-mono font-semibold">R$ {selectedConta.contabilidade.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                    </div>
+                    <div className="bg-muted rounded-lg p-3">
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Composição (Razão)</p>
+                      <p className="font-mono font-semibold">R$ {selectedConta.composicao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                    </div>
+                    <div className={`rounded-lg p-3 ${Math.abs(selectedConta.diferenca) < 0.01 ? 'bg-green-50 dark:bg-green-950' : 'bg-red-50 dark:bg-red-950'}`}>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Diferença</p>
+                      <p className={`font-mono font-semibold ${Math.abs(selectedConta.diferenca) < 0.01 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
+                        R$ {selectedConta.diferenca.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
                   </div>
-                </SheetDescription>
-              </SheetHeader>
+                </DialogDescription>
+              </DialogHeader>
 
-              {selectedMovimentacoes.length === 0 ? (
-                <p className="text-muted-foreground text-center py-8">Nenhum lançamento do razão encontrado para esta conta.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <p className="text-sm text-muted-foreground mb-2">{selectedMovimentacoes.length} lançamento(s)</p>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Data</TableHead>
-                        <TableHead>Lote</TableHead>
-                        <TableHead>Histórico</TableHead>
-                        <TableHead className="text-right">Débito</TableHead>
-                        <TableHead className="text-right">Crédito</TableHead>
-                        <TableHead className="text-right">Saldo</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {selectedMovimentacoes.map((mov, i) => (
-                        <TableRow key={i}>
-                          <TableCell className="whitespace-nowrap">
-                            {mov.data
-                              ? (mov.data instanceof Date ? mov.data : new Date(mov.data)).toLocaleDateString('pt-BR')
-                              : '—'}
-                          </TableCell>
-                          <TableCell className="font-mono">{mov.lote}</TableCell>
-                          <TableCell className="max-w-xs">
-                            <div className="truncate" title={mov.historico}>{mov.historico}</div>
-                          </TableCell>
-                          <TableCell className="text-right font-mono">
-                            {mov.debito > 0 ? `R$ ${mov.debito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
-                          </TableCell>
-                          <TableCell className="text-right font-mono">
-                            {mov.credito > 0 ? `R$ ${mov.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
-                          </TableCell>
-                          <TableCell className="text-right font-mono">
-                            R$ {mov.saldoExercicio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                          </TableCell>
+              {/* Tabela com scroll independente */}
+              <div className="flex-1 overflow-auto px-8 py-6">
+                {selectedMovimentacoes.length === 0 ? (
+                  <p className="text-muted-foreground text-center py-16">Nenhum lançamento do razão encontrado para esta conta.</p>
+                ) : (
+                  <>
+                    <p className="text-sm text-muted-foreground mb-3">{selectedMovimentacoes.length} lançamento(s)</p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-28">Data</TableHead>
+                          <TableHead className="w-28">Lote</TableHead>
+                          <TableHead>Histórico</TableHead>
+                          <TableHead className="text-right w-36">Débito</TableHead>
+                          <TableHead className="text-right w-36">Crédito</TableHead>
+                          <TableHead className="text-right w-36">Saldo</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
+                      </TableHeader>
+                      <TableBody>
+                        {selectedMovimentacoes.map((mov, i) => (
+                          <TableRow key={i}>
+                            <TableCell className="whitespace-nowrap">
+                              {mov.data
+                                ? (mov.data instanceof Date ? mov.data : new Date(mov.data)).toLocaleDateString('pt-BR')
+                                : '—'}
+                            </TableCell>
+                            <TableCell className="font-mono">{mov.lote}</TableCell>
+                            <TableCell>
+                              <span title={mov.historico}>{mov.historico}</span>
+                            </TableCell>
+                            <TableCell className="text-right font-mono">
+                              {mov.debito > 0 ? `R$ ${mov.debito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
+                            </TableCell>
+                            <TableCell className="text-right font-mono">
+                              {mov.credito > 0 ? `R$ ${mov.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
+                            </TableCell>
+                            <TableCell className="text-right font-mono">
+                              R$ {mov.saldoExercicio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </>
+                )}
+              </div>
             </>
           )}
-        </SheetContent>
-      </Sheet>
+        </DialogContent>
+      </Dialog>
 
       {/* Accounts Table */}
       <Card>
