@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useAccountingStore } from '@/store/accounting';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -18,20 +19,23 @@ import {
   AlertTriangle,
   FileText,
   Clock,
-  BarChart3
+  BarChart3,
+  Plus,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import type { Conta } from '@/types/accounting';
+import type { Conta, RazaoRow } from '@/types/accounting';
 import * as XLSX from 'xlsx';
 
 export function Status() {
-  const { contas, balanceteData, razaoData, reconcileAccount, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions } = useAccountingStore();
+  const { contas, balanceteData, razaoData, setRazaoData, reconcileAccount, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions } = useAccountingStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [naturezaFilter, setNaturezaFilter] = useState<string>('all');
   const [selectedConta, setSelectedConta] = useState<Conta | null>(null);
   const [selectedGlobalIndices, setSelectedGlobalIndices] = useState<Set<number>>(new Set());
   const [showReconciled, setShowReconciled] = useState(false);
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [manualEntry, setManualEntry] = useState({ data: '', lote: '', historico: '', debito: '', credito: '' });
   const { toast } = useToast();
 
   // Todos os lançamentos da conta com índice global no razaoData
@@ -101,8 +105,43 @@ export function Status() {
       setSelectedConta(null);
       setSelectedGlobalIndices(new Set());
       setShowReconciled(false);
+      setShowManualForm(false);
+      setManualEntry({ data: '', lote: '', historico: '', debito: '', credito: '' });
     }
   };
+
+  // Totais de débito e crédito dos lançamentos visíveis
+  const totaisVisiveis = useMemo(() => ({
+    debito: visibleMovs.reduce((acc, m) => acc + m.debito, 0),
+    credito: visibleMovs.reduce((acc, m) => acc + m.credito, 0),
+  }), [visibleMovs]);
+
+  const handleAddManualEntry = useCallback(() => {
+    if (!selectedConta) return;
+    const debito = parseFloat(manualEntry.debito.replace(',', '.')) || 0;
+    const credito = parseFloat(manualEntry.credito.replace(',', '.')) || 0;
+    if (debito === 0 && credito === 0) return;
+
+    const lastSaldo = allMovsWithIdx.length > 0
+      ? allMovsWithIdx[allMovsWithIdx.length - 1].saldoExercicio
+      : 0;
+    const saldoExercicio = lastSaldo + debito - credito;
+
+    const newRow: RazaoRow = {
+      conta: selectedConta.numero,
+      data: manualEntry.data ? new Date(manualEntry.data + 'T00:00:00') : new Date(),
+      lote: manualEntry.lote || 'MANUAL',
+      historico: manualEntry.historico,
+      debito,
+      credito,
+      saldoExercicio,
+    };
+
+    setRazaoData([...razaoData, newRow]);
+    setManualEntry({ data: '', lote: '', historico: '', debito: '', credito: '' });
+    setShowManualForm(false);
+    toast({ title: 'Lançamento adicionado', description: `Lançamento manual incluído na conta ${selectedConta.numero}.` });
+  }, [selectedConta, manualEntry, allMovsWithIdx, razaoData, setRazaoData, toast]);
 
   // Sempre recalcula composição e movimentações a partir dos dados atuais do razão.
   // Status e documentos são preservados da store (caso o usuário já tenha reconciliado).
@@ -339,10 +378,43 @@ export function Status() {
                 </DialogDescription>
               </DialogHeader>
 
+              {/* Formulário de lançamento manual */}
+              {showManualForm && (
+                <div className="px-8 py-4 border-b bg-muted/40 shrink-0">
+                  <p className="text-sm font-medium mb-3">Novo lançamento manual</p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                    <div className="flex flex-col gap-1">
+                      <Label className="text-xs">Data</Label>
+                      <Input type="date" value={manualEntry.data} onChange={e => setManualEntry(p => ({ ...p, data: e.target.value }))} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label className="text-xs">Lote</Label>
+                      <Input placeholder="Ex: 1234" value={manualEntry.lote} onChange={e => setManualEntry(p => ({ ...p, lote: e.target.value }))} />
+                    </div>
+                    <div className="flex flex-col gap-1 md:col-span-2">
+                      <Label className="text-xs">Histórico</Label>
+                      <Input placeholder="Descrição do lançamento" value={manualEntry.historico} onChange={e => setManualEntry(p => ({ ...p, historico: e.target.value }))} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label className="text-xs">Débito (R$)</Label>
+                      <Input placeholder="0,00" value={manualEntry.debito} onChange={e => setManualEntry(p => ({ ...p, debito: e.target.value }))} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label className="text-xs">Crédito (R$)</Label>
+                      <Input placeholder="0,00" value={manualEntry.credito} onChange={e => setManualEntry(p => ({ ...p, credito: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <Button size="sm" onClick={handleAddManualEntry}>Salvar lançamento</Button>
+                    <Button size="sm" variant="ghost" onClick={() => { setShowManualForm(false); setManualEntry({ data: '', lote: '', historico: '', debito: '', credito: '' }); }}>Cancelar</Button>
+                  </div>
+                </div>
+              )}
+
               {/* Barra de abas + ações */}
               <div className="px-8 py-3 border-b shrink-0 flex flex-col sm:flex-row sm:items-center gap-3">
                 {/* Abas Pendentes / Conciliados */}
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <Button
                     size="sm"
                     variant={!showReconciled ? 'default' : 'outline'}
@@ -356,6 +428,15 @@ export function Status() {
                     onClick={() => { setShowReconciled(true); setSelectedGlobalIndices(new Set()); }}
                   >
                     Ver lançamentos conciliados ({reconciledCount})
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => { setShowManualForm(p => !p); setShowReconciled(false); }}
+                    className="border-blue-400 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950"
+                  >
+                    <Plus className="w-4 h-4 mr-1" />
+                    Novo Lançamento
                   </Button>
                 </div>
 
@@ -453,6 +534,19 @@ export function Status() {
                           </TableRow>
                         ))}
                       </TableBody>
+                      <TableFooter>
+                        <TableRow>
+                          <TableCell />
+                          <TableCell colSpan={3} className="text-sm font-semibold">Total</TableCell>
+                          <TableCell className="text-right font-mono font-semibold">
+                            R$ {totaisVisiveis.debito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell className="text-right font-mono font-semibold">
+                            R$ {totaisVisiveis.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell />
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   </>
                 )}
