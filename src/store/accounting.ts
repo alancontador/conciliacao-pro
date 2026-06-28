@@ -29,6 +29,7 @@ interface AccountingState {
   // Conciliação de lançamentos individuais do razão
   reconciledRazaoIndices: number[];
   reconcileRazaoTransactions: (indices: number[]) => void;
+  unreconcileRazaoTransactions: (indices: number[]) => void;
 }
 
 export const useAccountingStore = create<AccountingState>()(
@@ -142,6 +143,12 @@ export const useAccountingStore = create<AccountingState>()(
         set((state) => ({
           reconciledRazaoIndices: [...new Set([...state.reconciledRazaoIndices, ...indices])],
         })),
+
+      unreconcileRazaoTransactions: (indices) =>
+        set((state) => {
+          const remove = new Set(indices);
+          return { reconciledRazaoIndices: state.reconciledRazaoIndices.filter(i => !remove.has(i)) };
+        }),
     }),
     {
       name: 'accounting-store',

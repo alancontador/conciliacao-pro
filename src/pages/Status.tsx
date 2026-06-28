@@ -24,7 +24,7 @@ import type { Conta } from '@/types/accounting';
 import * as XLSX from 'xlsx';
 
 export function Status() {
-  const { contas, balanceteData, razaoData, reconcileAccount, setContas, reconciledRazaoIndices, reconcileRazaoTransactions } = useAccountingStore();
+  const { contas, balanceteData, razaoData, reconcileAccount, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions } = useAccountingStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [naturezaFilter, setNaturezaFilter] = useState<string>('all');
@@ -88,6 +88,11 @@ export function Status() {
     reconcileRazaoTransactions(Array.from(selectedGlobalIndices));
     setSelectedGlobalIndices(new Set());
     setShowReconciled(false);
+  };
+
+  const handleUnreconcileSelected = () => {
+    unreconcileRazaoTransactions(Array.from(selectedGlobalIndices));
+    setSelectedGlobalIndices(new Set());
   };
 
   const handleDialogClose = (open: boolean) => {
@@ -352,17 +357,17 @@ export function Status() {
                   </Button>
                 </div>
 
-                {/* Informação da seleção + botão Conciliado */}
-                {!showReconciled && (
-                  <div className="flex items-center gap-4 sm:ml-auto flex-wrap">
-                    {selectedGlobalIndices.size > 0 && (
-                      <span className="text-sm text-muted-foreground">
-                        {selectedGlobalIndices.size} selecionado(s) &nbsp;|&nbsp;
-                        Déb: <span className="font-mono">R$ {selectionInfo.debito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                        &nbsp;/&nbsp;
-                        Cré: <span className="font-mono">R$ {selectionInfo.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                      </span>
-                    )}
+                {/* Informação da seleção + ações */}
+                <div className="flex items-center gap-4 sm:ml-auto flex-wrap">
+                  {selectedGlobalIndices.size > 0 && (
+                    <span className="text-sm text-muted-foreground">
+                      {selectedGlobalIndices.size} selecionado(s) &nbsp;|&nbsp;
+                      Déb: <span className="font-mono">R$ {selectionInfo.debito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      &nbsp;/&nbsp;
+                      Cré: <span className="font-mono">R$ {selectionInfo.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    </span>
+                  )}
+                  {!showReconciled ? (
                     <Button
                       size="sm"
                       disabled={!selectionInfo.balanced}
@@ -372,8 +377,19 @@ export function Status() {
                       <CheckCircle className="w-4 h-4 mr-1" />
                       Conciliado
                     </Button>
-                  </div>
-                )}
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={selectedGlobalIndices.size === 0}
+                      onClick={handleUnreconcileSelected}
+                      className="border-orange-400 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950 disabled:opacity-40"
+                    >
+                      <Clock className="w-4 h-4 mr-1" />
+                      Mover para Pendentes
+                    </Button>
+                  )}
+                </div>
               </div>
 
               {/* Tabela com scroll independente */}
@@ -388,14 +404,12 @@ export function Status() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          {!showReconciled && (
-                            <TableHead className="w-10">
-                              <Checkbox
-                                checked={visibleMovs.length > 0 && visibleMovs.every(m => selectedGlobalIndices.has(m.globalIdx))}
-                                onCheckedChange={handleSelectAll}
-                              />
-                            </TableHead>
-                          )}
+                          <TableHead className="w-10">
+                            <Checkbox
+                              checked={visibleMovs.length > 0 && visibleMovs.every(m => selectedGlobalIndices.has(m.globalIdx))}
+                              onCheckedChange={handleSelectAll}
+                            />
+                          </TableHead>
                           <TableHead className="w-28">Data</TableHead>
                           <TableHead className="w-28">Lote</TableHead>
                           <TableHead>Histórico</TableHead>
@@ -410,14 +424,12 @@ export function Status() {
                             key={mov.globalIdx}
                             className={selectedGlobalIndices.has(mov.globalIdx) ? 'bg-blue-50 dark:bg-blue-950' : ''}
                           >
-                            {!showReconciled && (
-                              <TableCell>
-                                <Checkbox
-                                  checked={selectedGlobalIndices.has(mov.globalIdx)}
-                                  onCheckedChange={() => handleToggleSelect(mov.globalIdx)}
-                                />
-                              </TableCell>
-                            )}
+                            <TableCell>
+                              <Checkbox
+                                checked={selectedGlobalIndices.has(mov.globalIdx)}
+                                onCheckedChange={() => handleToggleSelect(mov.globalIdx)}
+                              />
+                            </TableCell>
                             <TableCell className="whitespace-nowrap">
                               {mov.data
                                 ? (mov.data instanceof Date ? mov.data : new Date(mov.data)).toLocaleDateString('pt-BR')
