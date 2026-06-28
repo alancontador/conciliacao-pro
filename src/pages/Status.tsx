@@ -30,34 +30,42 @@ export function Status() {
   const [selectedConta, setSelectedConta] = useState<Conta | null>(null);
   const { toast } = useToast();
 
-  // Generate accounts from imported data if contas is empty
+  // Lançamentos do razão para a conta selecionada (busca direta na store)
+  const selectedMovimentacoes = useMemo(() => {
+    if (!selectedConta) return [];
+    return razaoData.filter(r => r.conta.trim() === selectedConta.numero.trim());
+  }, [selectedConta, razaoData]);
+
+  // Sempre recalcula composição e movimentações a partir dos dados atuais do razão.
+  // Status e documentos são preservados da store (caso o usuário já tenha reconciliado).
   const processedContas = useMemo(() => {
-    if (contas.length > 0) return contas;
+    if (balanceteData.length === 0) return contas;
 
-    if (balanceteData.length === 0) return [];
-
-    // Create accounts from balancete and calculate compositions from razão
     return balanceteData.map(balancete => {
-      const movimentacoes = razaoData.filter(razao =>
-        razao.conta.trim() === balancete.codigo.trim()
-      ).map((razao, index) => ({
-        id: `${balancete.codigo}-${index}`,
-        data: razao.data,
-        lote: razao.lote,
-        historico: razao.historico,
-        debito: razao.debito,
-        credito: razao.credito,
-        saldoExercicio: razao.saldoExercicio,
-      }));
+      const stored = contas.find(c => c.numero === balancete.codigo);
+
+      const movimentacoes = razaoData
+        .filter(razao => razao.conta.trim() === balancete.codigo.trim())
+        .map((razao, index) => ({
+          id: `${balancete.codigo}-${index}`,
+          data: razao.data,
+          lote: razao.lote,
+          historico: razao.historico,
+          debito: razao.debito,
+          credito: razao.credito,
+          saldoExercicio: razao.saldoExercicio,
+        }));
 
       // ATIVO: saldo devedor (D-C); PASSIVO: saldo credor (C-D)
-      const composicao = movimentacoes.reduce((acc, mov) => {
-        return balancete.natureza === 'ATIVO'
+      const composicao = movimentacoes.reduce((acc, mov) =>
+        balancete.natureza === 'ATIVO'
           ? acc + mov.debito - mov.credito
-          : acc + mov.credito - mov.debito;
-      }, 0);
+          : acc + mov.credito - mov.debito,
+        0,
+      );
 
       const diferenca = balancete.saldoAtual - composicao;
+      const autoStatus: Conta['status'] = Math.abs(diferenca) < 0.01 ? 'CONCILIADO' : 'NAO_CONCILIADO';
 
       return {
         numero: balancete.codigo,
@@ -66,11 +74,11 @@ export function Status() {
         contabilidade: balancete.saldoAtual,
         composicao,
         diferenca,
-        status: Math.abs(diferenca) < 0.01 ? 'CONCILIADO' : 'NAO_CONCILIADO' as const,
-        documentos: [],
+        status: stored?.status ?? autoStatus,
+        documentos: stored?.documentos ?? [],
         movimentacoes,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        createdAt: stored?.createdAt ?? new Date(),
+        updatedAt: stored?.updatedAt ?? new Date(),
       } as Conta;
     });
   }, [contas, balanceteData, razaoData]);
@@ -247,11 +255,11 @@ export function Status() {
                 </SheetDescription>
               </SheetHeader>
 
-              {selectedConta.movimentacoes.length === 0 ? (
-                <p className="text-muted-foreground text-center py-8">Nenhum lançamento encontrado para esta conta.</p>
+              {selectedMovimentacoes.length === 0 ? (
+                <p className="text-muted-foreground text-center py-8">Nenhum lançamento do razão encontrado para esta conta.</p>
               ) : (
                 <div className="overflow-x-auto">
-                  <p className="text-sm text-muted-foreground mb-2">{selectedConta.movimentacoes.length} lançamento(s)</p>
+                  <p className="text-sm text-muted-foreground mb-2">{selectedMovimentacoes.length} lançamento(s)</p>
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -264,12 +272,12 @@ export function Status() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {selectedConta.movimentacoes.map((mov) => (
-                        <TableRow key={mov.id}>
+                      {selectedMovimentacoes.map((mov, i) => (
+                        <TableRow key={i}>
                           <TableCell className="whitespace-nowrap">
-                            {mov.data instanceof Date
-                              ? mov.data.toLocaleDateString('pt-BR')
-                              : new Date(mov.data).toLocaleDateString('pt-BR')}
+                            {mov.data
+                              ? (mov.data instanceof Date ? mov.data : new Date(mov.data)).toLocaleDateString('pt-BR')
+                              : '—'}
                           </TableCell>
                           <TableCell className="font-mono">{mov.lote}</TableCell>
                           <TableCell className="max-w-xs">
