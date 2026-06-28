@@ -545,6 +545,7 @@ export function Status() {
                           <TableHead className="text-right w-36">Débito</TableHead>
                           <TableHead className="text-right w-36">Crédito</TableHead>
                           <TableHead className="text-right w-36">Saldo</TableHead>
+                          <TableHead className="w-16" />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -573,6 +574,7 @@ export function Status() {
                               <TableCell>
                                 <Input className="h-7 text-xs text-right" placeholder="0,00" value={editEntry.credito} onChange={e => setEditEntry(p => ({ ...p, credito: e.target.value }))} />
                               </TableCell>
+                              <TableCell />
                               <TableCell className="whitespace-nowrap">
                                 <div className="flex gap-1">
                                   <Button size="sm" className="h-7 px-2 text-xs" onClick={handleSaveEdit}>Salvar</Button>
@@ -611,19 +613,19 @@ export function Status() {
                                 {mov.credito > 0 ? `R$ ${mov.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
                               </TableCell>
                               <TableCell className="text-right font-mono">
-                                <div className="flex items-center justify-end gap-1">
-                                  <span>R$ {mov.saldoExercicio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                  {mov.isManual && (
-                                    <>
-                                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground" onClick={() => handleStartEdit(mov.globalIdx)} title="Editar">
-                                        <Pencil className="w-3 h-3" />
-                                      </Button>
-                                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive hover:text-destructive" onClick={() => handleDeleteManual(mov.globalIdx)} title="Excluir">
-                                        <Trash2 className="w-3 h-3" />
-                                      </Button>
-                                    </>
-                                  )}
-                                </div>
+                                R$ {mov.saldoExercicio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell>
+                                {mov.isManual && (
+                                  <div className="flex gap-0.5">
+                                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground" onClick={() => handleStartEdit(mov.globalIdx)} title="Editar">
+                                      <Pencil className="w-3 h-3" />
+                                    </Button>
+                                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive hover:text-destructive" onClick={() => handleDeleteManual(mov.globalIdx)} title="Excluir">
+                                      <Trash2 className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                )}
                               </TableCell>
                             </TableRow>
                           );
@@ -639,6 +641,7 @@ export function Status() {
                           <TableCell className="text-right font-mono font-semibold">
                             R$ {totaisVisiveis.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                           </TableCell>
+                          <TableCell />
                           <TableCell />
                         </TableRow>
                       </TableFooter>
