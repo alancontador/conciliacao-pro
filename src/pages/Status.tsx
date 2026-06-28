@@ -193,6 +193,54 @@ export function Status() {
     toast({ title: 'Lançamento excluído' });
   }, [deleteRazaoTransaction, toast]);
 
+  // Sempre recalcula composição e movimentações a partir dos dados atuais do razão.
+  // Status e documentos são preservados da store (caso o usuário já tenha reconciliado).
+  const processedContas = useMemo(() => {
+    if (balanceteData.length === 0) return contas;
+
+    return balanceteData.map(balancete => {
+      const stored = contas.find(c => c.numero === balancete.codigo);
+
+      const movimentacoes = razaoData
+        .filter(razao => razao.conta.trim() === balancete.codigo.trim())
+        .map((razao, index) => ({
+          id: `${balancete.codigo}-${index}`,
+          data: razao.data,
+          lote: razao.lote,
+          historico: razao.historico,
+          debito: razao.debito,
+          credito: razao.credito,
+          saldoExercicio: razao.saldoExercicio,
+        }));
+
+      const composicao = movimentacoes.reduce((acc, mov) =>
+        balancete.natureza === 'ATIVO'
+          ? acc + mov.debito - mov.credito
+          : acc + mov.credito - mov.debito,
+        0,
+      );
+
+      const diferenca = Math.abs(balancete.saldoAtual) - Math.abs(composicao);
+      const computedStatus: Conta['status'] = Math.abs(diferenca) < 0.01
+        ? (stored?.status ?? 'CONCILIADO')
+        : 'NAO_CONCILIADO';
+
+      return {
+        numero: balancete.codigo,
+        descricao: balancete.descricao,
+        natureza: balancete.natureza,
+        contabilidade: balancete.saldoAtual,
+        composicao,
+        diferenca,
+        status: computedStatus,
+        documentos: stored?.documentos ?? [],
+        movimentacoes,
+        createdAt: stored?.createdAt ?? new Date(),
+        updatedAt: stored?.updatedAt ?? new Date(),
+      } as Conta;
+    });
+  }, [contas, balanceteData, razaoData]);
+
   const handleAttachClick = useCallback((numero: string) => {
     attachTargetRef.current = numero;
     fileInputRef.current?.click();
@@ -235,56 +283,6 @@ export function Status() {
     toast({ title: 'Documento removido' });
   }, [contas, processedContas, updateConta, setContas, toast]);
 
-  // Sempre recalcula composição e movimentações a partir dos dados atuais do razão.
-  // Status e documentos são preservados da store (caso o usuário já tenha reconciliado).
-  const processedContas = useMemo(() => {
-    if (balanceteData.length === 0) return contas;
-
-    return balanceteData.map(balancete => {
-      const stored = contas.find(c => c.numero === balancete.codigo);
-
-      const movimentacoes = razaoData
-        .filter(razao => razao.conta.trim() === balancete.codigo.trim())
-        .map((razao, index) => ({
-          id: `${balancete.codigo}-${index}`,
-          data: razao.data,
-          lote: razao.lote,
-          historico: razao.historico,
-          debito: razao.debito,
-          credito: razao.credito,
-          saldoExercicio: razao.saldoExercicio,
-        }));
-
-      // Composição = soma dos valores dos lançamentos do razão
-      // ATIVO: débitos aumentam o saldo; PASSIVO: créditos aumentam o saldo
-      const composicao = movimentacoes.reduce((acc, mov) =>
-        balancete.natureza === 'ATIVO'
-          ? acc + mov.debito - mov.credito
-          : acc + mov.credito - mov.debito,
-        0,
-      );
-
-      const diferenca = Math.abs(balancete.saldoAtual) - Math.abs(composicao);
-      // Diferença ≠ 0 força NAO_CONCILIADO independente do status salvo pelo usuário
-      const computedStatus: Conta['status'] = Math.abs(diferenca) < 0.01
-        ? (stored?.status ?? 'CONCILIADO')
-        : 'NAO_CONCILIADO';
-
-      return {
-        numero: balancete.codigo,
-        descricao: balancete.descricao,
-        natureza: balancete.natureza,
-        contabilidade: balancete.saldoAtual,
-        composicao,
-        diferenca,
-        status: computedStatus,
-        documentos: stored?.documentos ?? [],
-        movimentacoes,
-        createdAt: stored?.createdAt ?? new Date(),
-        updatedAt: stored?.updatedAt ?? new Date(),
-      } as Conta;
-    });
-  }, [contas, balanceteData, razaoData]);
 
   // Filter accounts
   const filteredContas = useMemo(() => {
