@@ -123,11 +123,14 @@ export function Status() {
           saldoExercicio: razao.saldoExercicio,
         }));
 
-      // saldoExercício já é o saldo acumulado (saldoAnterior + todos os movimentos)
-      // O último lançamento da conta traz o saldo final a ser comparado com o balancete
-      const composicao = movimentacoes.length > 0
-        ? movimentacoes[movimentacoes.length - 1].saldoExercicio
-        : 0;
+      // Composição = soma dos valores dos lançamentos do razão
+      // ATIVO: débitos aumentam o saldo; PASSIVO: créditos aumentam o saldo
+      const composicao = movimentacoes.reduce((acc, mov) =>
+        balancete.natureza === 'ATIVO'
+          ? acc + mov.debito - mov.credito
+          : acc + mov.credito - mov.debito,
+        0,
+      );
 
       const diferenca = balancete.saldoAtual - composicao;
       const autoStatus: Conta['status'] = Math.abs(diferenca) < 0.01 ? 'CONCILIADO' : 'NAO_CONCILIADO';
