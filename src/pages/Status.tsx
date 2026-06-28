@@ -216,7 +216,7 @@ export function Status() {
     reconcileAccount(numero, status);
     toast({
       title: 'Status atualizado',
-      description: `Conta ${numero} marcada como ${status.replace('_', ' ')}.`,
+      description: `Conta ${numero} marcada como ${{ CONCILIADO: 'Conciliado', NAO_CONCILIADO: 'Não Conciliado', EM_ANALISE: 'Em Análise' }[status]}.`,
     });
   };
 
