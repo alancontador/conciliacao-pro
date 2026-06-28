@@ -223,7 +223,9 @@ export function Status() {
       const diferenca = Math.abs(balancete.saldoAtual) - Math.abs(composicao);
       const computedStatus: Conta['status'] = Math.abs(diferenca) < 0.01
         ? (stored?.status ?? 'CONCILIADO')
-        : 'NAO_CONCILIADO';
+        : stored?.status === 'EM_ANALISE'
+          ? 'EM_ANALISE'
+          : 'NAO_CONCILIADO';
 
       return {
         numero: balancete.codigo,
