@@ -88,12 +88,9 @@ export const useAccountingStore = create<AccountingState>()(
                 saldoExercicio: r.saldoExercicio,
               }));
 
-            const composicao = movimentacoes.reduce(
-              (acc, m) => balancete.natureza === 'ATIVO'
-                ? acc + m.debito - m.credito
-                : acc + m.credito - m.debito,
-              0,
-            );
+            const composicao = movimentacoes.length > 0
+              ? movimentacoes[movimentacoes.length - 1].saldoExercicio
+              : 0;
             const diferenca = balancete.saldoAtual - composicao;
 
             return {
