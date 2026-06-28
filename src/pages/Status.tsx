@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   Search,
@@ -23,18 +24,79 @@ import type { Conta } from '@/types/accounting';
 import * as XLSX from 'xlsx';
 
 export function Status() {
-  const { contas, balanceteData, razaoData, reconcileAccount, setContas } = useAccountingStore();
+  const { contas, balanceteData, razaoData, reconcileAccount, setContas, reconciledRazaoIndices, reconcileRazaoTransactions } = useAccountingStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [naturezaFilter, setNaturezaFilter] = useState<string>('all');
   const [selectedConta, setSelectedConta] = useState<Conta | null>(null);
+  const [selectedGlobalIndices, setSelectedGlobalIndices] = useState<Set<number>>(new Set());
+  const [showReconciled, setShowReconciled] = useState(false);
   const { toast } = useToast();
 
-  // Lançamentos do razão para a conta selecionada (busca direta na store)
-  const selectedMovimentacoes = useMemo(() => {
+  // Todos os lançamentos da conta com índice global no razaoData
+  const allMovsWithIdx = useMemo(() => {
     if (!selectedConta) return [];
-    return razaoData.filter(r => r.conta.trim() === selectedConta.numero.trim());
+    return razaoData
+      .map((r, globalIdx) => ({ ...r, globalIdx }))
+      .filter(r => r.conta.trim() === selectedConta.numero.trim());
   }, [selectedConta, razaoData]);
+
+  const reconciledSet = useMemo(() => new Set(reconciledRazaoIndices), [reconciledRazaoIndices]);
+
+  // Filtra pendentes ou conciliados conforme a aba ativa
+  const visibleMovs = useMemo(() =>
+    showReconciled
+      ? allMovsWithIdx.filter(m => reconciledSet.has(m.globalIdx))
+      : allMovsWithIdx.filter(m => !reconciledSet.has(m.globalIdx)),
+    [allMovsWithIdx, reconciledSet, showReconciled],
+  );
+
+  const pendingCount = useMemo(() =>
+    allMovsWithIdx.filter(m => !reconciledSet.has(m.globalIdx)).length,
+    [allMovsWithIdx, reconciledSet],
+  );
+  const reconciledCount = useMemo(() =>
+    allMovsWithIdx.filter(m => reconciledSet.has(m.globalIdx)).length,
+    [allMovsWithIdx, reconciledSet],
+  );
+
+  // Totais da seleção e verificação de equilíbrio
+  const selectionInfo = useMemo(() => {
+    let debito = 0, credito = 0;
+    for (const idx of selectedGlobalIndices) {
+      const mov = razaoData[idx];
+      if (mov) { debito += mov.debito; credito += mov.credito; }
+    }
+    return { debito, credito, balanced: selectedGlobalIndices.size > 0 && Math.abs(debito - credito) < 0.01 };
+  }, [selectedGlobalIndices, razaoData]);
+
+  const handleToggleSelect = (globalIdx: number) => {
+    setSelectedGlobalIndices(prev => {
+      const next = new Set(prev);
+      if (next.has(globalIdx)) next.delete(globalIdx); else next.add(globalIdx);
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    const allVisible = visibleMovs.map(m => m.globalIdx);
+    const allSelected = allVisible.every(idx => selectedGlobalIndices.has(idx));
+    setSelectedGlobalIndices(allSelected ? new Set() : new Set(allVisible));
+  };
+
+  const handleReconcileSelected = () => {
+    reconcileRazaoTransactions(Array.from(selectedGlobalIndices));
+    setSelectedGlobalIndices(new Set());
+    setShowReconciled(false);
+  };
+
+  const handleDialogClose = (open: boolean) => {
+    if (!open) {
+      setSelectedConta(null);
+      setSelectedGlobalIndices(new Set());
+      setShowReconciled(false);
+    }
+  };
 
   // Sempre recalcula composição e movimentações a partir dos dados atuais do razão.
   // Status e documentos são preservados da store (caso o usuário já tenha reconciliado).
@@ -237,7 +299,7 @@ export function Status() {
       </Card>
 
       {/* Dialog de lançamentos da conta */}
-      <Dialog open={!!selectedConta} onOpenChange={(open) => { if (!open) setSelectedConta(null); }}>
+      <Dialog open={!!selectedConta} onOpenChange={handleDialogClose}>
         <DialogContent className="max-w-[95vw] w-[95vw] max-h-[90vh] flex flex-col p-0">
           {selectedConta && (
             <>
@@ -270,16 +332,70 @@ export function Status() {
                 </DialogDescription>
               </DialogHeader>
 
+              {/* Barra de abas + ações */}
+              <div className="px-8 py-3 border-b shrink-0 flex flex-col sm:flex-row sm:items-center gap-3">
+                {/* Abas Pendentes / Conciliados */}
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant={!showReconciled ? 'default' : 'outline'}
+                    onClick={() => { setShowReconciled(false); setSelectedGlobalIndices(new Set()); }}
+                  >
+                    Pendentes ({pendingCount})
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={showReconciled ? 'default' : 'outline'}
+                    onClick={() => { setShowReconciled(true); setSelectedGlobalIndices(new Set()); }}
+                  >
+                    Ver lançamentos conciliados ({reconciledCount})
+                  </Button>
+                </div>
+
+                {/* Informação da seleção + botão Conciliado */}
+                {!showReconciled && (
+                  <div className="flex items-center gap-4 sm:ml-auto flex-wrap">
+                    {selectedGlobalIndices.size > 0 && (
+                      <span className="text-sm text-muted-foreground">
+                        {selectedGlobalIndices.size} selecionado(s) &nbsp;|&nbsp;
+                        Déb: <span className="font-mono">R$ {selectionInfo.debito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        &nbsp;/&nbsp;
+                        Cré: <span className="font-mono">R$ {selectionInfo.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      </span>
+                    )}
+                    <Button
+                      size="sm"
+                      disabled={!selectionInfo.balanced}
+                      onClick={handleReconcileSelected}
+                      className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-40"
+                    >
+                      <CheckCircle className="w-4 h-4 mr-1" />
+                      Conciliado
+                    </Button>
+                  </div>
+                )}
+              </div>
+
               {/* Tabela com scroll independente */}
-              <div className="flex-1 overflow-auto px-8 py-6">
-                {selectedMovimentacoes.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-16">Nenhum lançamento do razão encontrado para esta conta.</p>
+              <div className="flex-1 overflow-auto px-8 py-4">
+                {visibleMovs.length === 0 ? (
+                  <p className="text-muted-foreground text-center py-16">
+                    {showReconciled ? 'Nenhum lançamento conciliado para esta conta.' : 'Nenhum lançamento pendente para esta conta.'}
+                  </p>
                 ) : (
                   <>
-                    <p className="text-sm text-muted-foreground mb-3">{selectedMovimentacoes.length} lançamento(s)</p>
+                    <p className="text-sm text-muted-foreground mb-3">{visibleMovs.length} lançamento(s)</p>
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          {!showReconciled && (
+                            <TableHead className="w-10">
+                              <Checkbox
+                                checked={visibleMovs.length > 0 && visibleMovs.every(m => selectedGlobalIndices.has(m.globalIdx))}
+                                onCheckedChange={handleSelectAll}
+                              />
+                            </TableHead>
+                          )}
                           <TableHead className="w-28">Data</TableHead>
                           <TableHead className="w-28">Lote</TableHead>
                           <TableHead>Histórico</TableHead>
@@ -289,8 +405,19 @@ export function Status() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {selectedMovimentacoes.map((mov, i) => (
-                          <TableRow key={i}>
+                        {visibleMovs.map((mov) => (
+                          <TableRow
+                            key={mov.globalIdx}
+                            className={selectedGlobalIndices.has(mov.globalIdx) ? 'bg-blue-50 dark:bg-blue-950' : ''}
+                          >
+                            {!showReconciled && (
+                              <TableCell>
+                                <Checkbox
+                                  checked={selectedGlobalIndices.has(mov.globalIdx)}
+                                  onCheckedChange={() => handleToggleSelect(mov.globalIdx)}
+                                />
+                              </TableCell>
+                            )}
                             <TableCell className="whitespace-nowrap">
                               {mov.data
                                 ? (mov.data instanceof Date ? mov.data : new Date(mov.data)).toLocaleDateString('pt-BR')

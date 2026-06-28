@@ -25,6 +25,10 @@ interface AccountingState {
   // Calculations
   calculateKPIs: () => KPIData;
   reconcileAccount: (numero: string, status: Conta['status']) => void;
+
+  // Conciliação de lançamentos individuais do razão
+  reconciledRazaoIndices: number[];
+  reconcileRazaoTransactions: (indices: number[]) => void;
 }
 
 export const useAccountingStore = create<AccountingState>()(
@@ -41,6 +45,7 @@ export const useAccountingStore = create<AccountingState>()(
       balanceteData: [],
       razaoData: [],
       importHistory: [],
+      reconciledRazaoIndices: [],
 
       setCompanyInfo: (info) => set({ companyInfo: info }),
 
@@ -131,6 +136,11 @@ export const useAccountingStore = create<AccountingState>()(
               ? { ...conta, status, updatedAt: new Date() }
               : conta
           ),
+        })),
+
+      reconcileRazaoTransactions: (indices) =>
+        set((state) => ({
+          reconciledRazaoIndices: [...new Set([...state.reconciledRazaoIndices, ...indices])],
         })),
     }),
     {
