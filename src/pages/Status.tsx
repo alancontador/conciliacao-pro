@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { useAccountingStore } from '@/store/accounting';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import {
   Search,
   Filter,
@@ -23,13 +24,14 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Paperclip,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import type { Conta, RazaoRow } from '@/types/accounting';
+import type { Conta, RazaoRow, Documento } from '@/types/accounting';
 import * as XLSX from 'xlsx';
 
 export function Status() {
-  const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions } = useAccountingStore();
+  const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, updateConta, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions } = useAccountingStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [naturezaFilter, setNaturezaFilter] = useState<string>('all');
@@ -41,6 +43,8 @@ export function Status() {
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editEntry, setEditEntry] = useState({ data: '', lote: '', historico: '', debito: '', credito: '' });
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachTargetRef = useRef<string | null>(null);
 
   // Todos os lançamentos da conta com índice global no razaoData
   const allMovsWithIdx = useMemo(() => {
@@ -188,6 +192,48 @@ export function Status() {
     });
     toast({ title: 'Lançamento excluído' });
   }, [deleteRazaoTransaction, toast]);
+
+  const handleAttachClick = useCallback((numero: string) => {
+    attachTargetRef.current = numero;
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const numero = attachTargetRef.current;
+    if (!file || !numero) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast({ title: 'Arquivo muito grande', description: 'Limite de 10 MB por arquivo.', variant: 'destructive' });
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const doc: Documento = {
+        id: crypto.randomUUID(),
+        nome: file.name,
+        tipo: file.type || 'application/octet-stream',
+        tamanho: file.size,
+        url: reader.result as string,
+        uploadedAt: new Date(),
+        uploadedBy: 'Usuário',
+      };
+      if (contas.length === 0) setContas(processedContas);
+      const existing = processedContas.find(c => c.numero === numero);
+      updateConta(numero, { documentos: [...(existing?.documentos ?? []), doc] });
+      toast({ title: 'Documento anexado', description: file.name });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  }, [contas, processedContas, updateConta, setContas, toast]);
+
+  const handleRemoveDoc = useCallback((numero: string, docId: string) => {
+    const existing = processedContas.find(c => c.numero === numero);
+    if (!existing) return;
+    if (contas.length === 0) setContas(processedContas);
+    updateConta(numero, { documentos: existing.documentos.filter(d => d.id !== docId) });
+    toast({ title: 'Documento removido' });
+  }, [contas, processedContas, updateConta, setContas, toast]);
 
   // Sempre recalcula composição e movimentações a partir dos dados atuais do razão.
   // Status e documentos são preservados da store (caso o usuário já tenha reconciliado).
@@ -714,11 +760,44 @@ export function Status() {
                       {getStatusBadge(conta.status)}
                     </TableCell>
                     <TableCell>
-                      {conta.documentos.length > 0 ? (
-                        <FileText className="w-4 h-4 text-success" />
-                      ) : (
-                        <div className="w-4 h-4" />
-                      )}
+                      <div className="flex items-center gap-1">
+                        {conta.documentos.length > 0 ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-success hover:text-success">
+                                <FileText className="w-4 h-4" />
+                                <span className="text-xs font-semibold">{conta.documentos.length}</span>
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start" className="w-64">
+                              {conta.documentos.map(doc => (
+                                <DropdownMenuItem key={doc.id} className="flex items-center justify-between gap-2 pr-1" onSelect={e => e.preventDefault()}>
+                                  <span className="truncate text-xs flex-1" title={doc.nome}>{doc.nome}</span>
+                                  <div className="flex gap-1 shrink-0">
+                                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0" title="Baixar"
+                                      onClick={() => { const a = document.createElement('a'); a.href = doc.url; a.download = doc.nome; a.click(); }}>
+                                      <Download className="w-3 h-3" />
+                                    </Button>
+                                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive hover:text-destructive" title="Remover"
+                                      onClick={() => handleRemoveDoc(conta.numero, doc.id)}>
+                                      <Trash2 className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                </DropdownMenuItem>
+                              ))}
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onSelect={e => { e.preventDefault(); handleAttachClick(conta.numero); }}>
+                                <Paperclip className="w-3 h-3 mr-2" />
+                                <span className="text-xs">Anexar outro arquivo</span>
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : (
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-foreground" onClick={() => handleAttachClick(conta.numero)} title="Anexar documento">
+                            <Paperclip className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
@@ -770,6 +849,15 @@ export function Status() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Input escondido para seleção de arquivos */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.txt"
+        onChange={handleFileSelected}
+      />
     </div>
   );
 }
