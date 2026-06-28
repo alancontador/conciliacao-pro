@@ -14,6 +14,7 @@ import {
   Download,
   Eye,
   CheckCircle,
+  XCircle,
   AlertTriangle,
   FileText,
   Clock,
@@ -531,24 +532,38 @@ export function Status() {
                         </Button>
                         
                         {conta.status !== 'CONCILIADO' && (
-                          <Button 
-                            variant="ghost" 
+                          <Button
+                            variant="ghost"
                             size="sm"
                             onClick={() => handleReconcile(conta.numero, 'CONCILIADO')}
                             className="text-success hover:text-success"
+                            title="Marcar como Conciliado"
                           >
                             <CheckCircle className="w-4 h-4" />
                           </Button>
                         )}
 
                         {conta.status !== 'EM_ANALISE' && (
-                          <Button 
-                            variant="ghost" 
+                          <Button
+                            variant="ghost"
                             size="sm"
                             onClick={() => handleReconcile(conta.numero, 'EM_ANALISE')}
                             className="text-warning hover:text-warning"
+                            title="Marcar como Em Análise"
                           >
                             <Clock className="w-4 h-4" />
+                          </Button>
+                        )}
+
+                        {conta.status !== 'NAO_CONCILIADO' && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleReconcile(conta.numero, 'NAO_CONCILIADO')}
+                            className="text-destructive hover:text-destructive"
+                            title="Marcar como Não Conciliado"
+                          >
+                            <XCircle className="w-4 h-4" />
                           </Button>
                         )}
                       </div>
