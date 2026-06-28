@@ -26,6 +26,10 @@ interface AccountingState {
   calculateKPIs: () => KPIData;
   reconcileAccount: (numero: string, status: Conta['status']) => void;
 
+  // Edição e exclusão de lançamentos do razão
+  updateRazaoTransaction: (index: number, updates: Partial<RazaoRow>) => void;
+  deleteRazaoTransaction: (index: number) => void;
+
   // Conciliação de lançamentos individuais do razão
   reconciledRazaoIndices: number[];
   reconcileRazaoTransactions: (indices: number[]) => void;
@@ -137,6 +141,21 @@ export const useAccountingStore = create<AccountingState>()(
               ? { ...conta, status, updatedAt: new Date() }
               : conta
           ),
+        })),
+
+      updateRazaoTransaction: (index, updates) =>
+        set((state) => {
+          const next = [...state.razaoData];
+          next[index] = { ...next[index], ...updates };
+          return { razaoData: next };
+        }),
+
+      deleteRazaoTransaction: (index) =>
+        set((state) => ({
+          razaoData: state.razaoData.filter((_, i) => i !== index),
+          reconciledRazaoIndices: state.reconciledRazaoIndices
+            .filter(i => i !== index)
+            .map(i => (i > index ? i - 1 : i)),
         })),
 
       reconcileRazaoTransactions: (indices) =>

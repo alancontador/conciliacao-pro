@@ -21,13 +21,15 @@ import {
   Clock,
   BarChart3,
   Plus,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type { Conta, RazaoRow } from '@/types/accounting';
 import * as XLSX from 'xlsx';
 
 export function Status() {
-  const { contas, balanceteData, razaoData, setRazaoData, reconcileAccount, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions } = useAccountingStore();
+  const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions } = useAccountingStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [naturezaFilter, setNaturezaFilter] = useState<string>('all');
@@ -36,6 +38,8 @@ export function Status() {
   const [showReconciled, setShowReconciled] = useState(false);
   const [showManualForm, setShowManualForm] = useState(false);
   const [manualEntry, setManualEntry] = useState({ data: '', lote: '', historico: '', debito: '', credito: '' });
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editEntry, setEditEntry] = useState({ data: '', lote: '', historico: '', debito: '', credito: '' });
   const { toast } = useToast();
 
   // Todos os lançamentos da conta com índice global no razaoData
@@ -107,6 +111,7 @@ export function Status() {
       setShowReconciled(false);
       setShowManualForm(false);
       setManualEntry({ data: '', lote: '', historico: '', debito: '', credito: '' });
+      setEditingIdx(null);
     }
   };
 
@@ -135,6 +140,7 @@ export function Status() {
       debito,
       credito,
       saldoExercicio,
+      isManual: true,
     };
 
     setRazaoData([...razaoData, newRow]);
@@ -142,6 +148,46 @@ export function Status() {
     setShowManualForm(false);
     toast({ title: 'Lançamento adicionado', description: `Lançamento manual incluído na conta ${selectedConta.numero}.` });
   }, [selectedConta, manualEntry, allMovsWithIdx, razaoData, setRazaoData, toast]);
+
+  const handleStartEdit = useCallback((globalIdx: number) => {
+    const mov = razaoData[globalIdx];
+    if (!mov) return;
+    const d = mov.data instanceof Date ? mov.data : new Date(mov.data);
+    setEditingIdx(globalIdx);
+    setEditEntry({
+      data: d.toISOString().split('T')[0],
+      lote: mov.lote,
+      historico: mov.historico,
+      debito: mov.debito > 0 ? mov.debito.toFixed(2).replace('.', ',') : '',
+      credito: mov.credito > 0 ? mov.credito.toFixed(2).replace('.', ',') : '',
+    });
+  }, [razaoData]);
+
+  const handleSaveEdit = useCallback(() => {
+    if (editingIdx === null) return;
+    const debito = parseFloat(editEntry.debito.replace(',', '.')) || 0;
+    const credito = parseFloat(editEntry.credito.replace(',', '.')) || 0;
+    updateRazaoTransaction(editingIdx, {
+      data: editEntry.data ? new Date(editEntry.data + 'T00:00:00') : razaoData[editingIdx].data,
+      lote: editEntry.lote || razaoData[editingIdx].lote,
+      historico: editEntry.historico,
+      debito,
+      credito,
+    });
+    setEditingIdx(null);
+    toast({ title: 'Lançamento atualizado' });
+  }, [editingIdx, editEntry, razaoData, updateRazaoTransaction, toast]);
+
+  const handleDeleteManual = useCallback((globalIdx: number) => {
+    deleteRazaoTransaction(globalIdx);
+    // Se estava selecionado, remove da seleção
+    setSelectedGlobalIndices(prev => {
+      const next = new Set(prev);
+      next.delete(globalIdx);
+      return next;
+    });
+    toast({ title: 'Lançamento excluído' });
+  }, [deleteRazaoTransaction, toast]);
 
   // Sempre recalcula composição e movimentações a partir dos dados atuais do razão.
   // Status e documentos são preservados da store (caso o usuário já tenha reconciliado).
@@ -502,37 +548,86 @@ export function Status() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {visibleMovs.map((mov) => (
-                          <TableRow
-                            key={mov.globalIdx}
-                            className={selectedGlobalIndices.has(mov.globalIdx) ? 'bg-blue-50 dark:bg-blue-950' : ''}
-                          >
-                            <TableCell>
-                              <Checkbox
-                                checked={selectedGlobalIndices.has(mov.globalIdx)}
-                                onCheckedChange={() => handleToggleSelect(mov.globalIdx)}
-                              />
-                            </TableCell>
-                            <TableCell className="whitespace-nowrap">
-                              {mov.data
-                                ? (mov.data instanceof Date ? mov.data : new Date(mov.data)).toLocaleDateString('pt-BR')
-                                : '—'}
-                            </TableCell>
-                            <TableCell className="font-mono">{mov.lote}</TableCell>
-                            <TableCell>
-                              <span title={mov.historico}>{mov.historico}</span>
-                            </TableCell>
-                            <TableCell className="text-right font-mono">
-                              {mov.debito > 0 ? `R$ ${mov.debito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
-                            </TableCell>
-                            <TableCell className="text-right font-mono">
-                              {mov.credito > 0 ? `R$ ${mov.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
-                            </TableCell>
-                            <TableCell className="text-right font-mono">
-                              R$ {mov.saldoExercicio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {visibleMovs.map((mov) => {
+                          const isEditing = editingIdx === mov.globalIdx;
+                          const rowBg = selectedGlobalIndices.has(mov.globalIdx)
+                            ? 'bg-blue-50 dark:bg-blue-950'
+                            : mov.isManual
+                            ? 'bg-amber-50 dark:bg-amber-950/40'
+                            : '';
+                          return isEditing ? (
+                            <TableRow key={mov.globalIdx} className="bg-amber-50 dark:bg-amber-950/40">
+                              <TableCell />
+                              <TableCell>
+                                <Input type="date" className="h-7 text-xs" value={editEntry.data} onChange={e => setEditEntry(p => ({ ...p, data: e.target.value }))} />
+                              </TableCell>
+                              <TableCell>
+                                <Input className="h-7 text-xs" value={editEntry.lote} onChange={e => setEditEntry(p => ({ ...p, lote: e.target.value }))} />
+                              </TableCell>
+                              <TableCell>
+                                <Input className="h-7 text-xs" value={editEntry.historico} onChange={e => setEditEntry(p => ({ ...p, historico: e.target.value }))} />
+                              </TableCell>
+                              <TableCell>
+                                <Input className="h-7 text-xs text-right" placeholder="0,00" value={editEntry.debito} onChange={e => setEditEntry(p => ({ ...p, debito: e.target.value }))} />
+                              </TableCell>
+                              <TableCell>
+                                <Input className="h-7 text-xs text-right" placeholder="0,00" value={editEntry.credito} onChange={e => setEditEntry(p => ({ ...p, credito: e.target.value }))} />
+                              </TableCell>
+                              <TableCell className="whitespace-nowrap">
+                                <div className="flex gap-1">
+                                  <Button size="sm" className="h-7 px-2 text-xs" onClick={handleSaveEdit}>Salvar</Button>
+                                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setEditingIdx(null)}>✕</Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            <TableRow key={mov.globalIdx} className={rowBg}>
+                              <TableCell>
+                                <Checkbox
+                                  checked={selectedGlobalIndices.has(mov.globalIdx)}
+                                  onCheckedChange={() => handleToggleSelect(mov.globalIdx)}
+                                />
+                              </TableCell>
+                              <TableCell className="whitespace-nowrap">
+                                {mov.data
+                                  ? (mov.data instanceof Date ? mov.data : new Date(mov.data)).toLocaleDateString('pt-BR')
+                                  : '—'}
+                              </TableCell>
+                              <TableCell className="font-mono">{mov.lote}</TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2">
+                                  {mov.isManual && (
+                                    <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 text-[10px] font-semibold px-1.5 py-0.5 leading-none shrink-0">
+                                      MANUAL
+                                    </span>
+                                  )}
+                                  <span title={mov.historico}>{mov.historico}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-mono">
+                                {mov.debito > 0 ? `R$ ${mov.debito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
+                              </TableCell>
+                              <TableCell className="text-right font-mono">
+                                {mov.credito > 0 ? `R$ ${mov.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
+                              </TableCell>
+                              <TableCell className="text-right font-mono">
+                                <div className="flex items-center justify-end gap-1">
+                                  <span>R$ {mov.saldoExercicio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                  {mov.isManual && (
+                                    <>
+                                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground" onClick={() => handleStartEdit(mov.globalIdx)} title="Editar">
+                                        <Pencil className="w-3 h-3" />
+                                      </Button>
+                                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive hover:text-destructive" onClick={() => handleDeleteManual(mov.globalIdx)} title="Excluir">
+                                        <Trash2 className="w-3 h-3" />
+                                      </Button>
+                                    </>
+                                  )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                       <TableFooter>
                         <TableRow>

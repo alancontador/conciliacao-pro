@@ -53,6 +53,7 @@ export interface RazaoRow {
   debito: number;
   credito: number;
   saldoExercicio: number;
+  isManual?: boolean;
 }
 
 export interface ImportHistory {
