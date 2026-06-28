@@ -219,7 +219,10 @@ export function Status() {
       );
 
       const diferenca = Math.abs(balancete.saldoAtual) - Math.abs(composicao);
-      const autoStatus: Conta['status'] = Math.abs(diferenca) < 0.01 ? 'CONCILIADO' : 'NAO_CONCILIADO';
+      // Diferença ≠ 0 força NAO_CONCILIADO independente do status salvo pelo usuário
+      const computedStatus: Conta['status'] = Math.abs(diferenca) < 0.01
+        ? (stored?.status ?? 'CONCILIADO')
+        : 'NAO_CONCILIADO';
 
       return {
         numero: balancete.codigo,
@@ -228,7 +231,7 @@ export function Status() {
         contabilidade: balancete.saldoAtual,
         composicao,
         diferenca,
-        status: stored?.status ?? autoStatus,
+        status: computedStatus,
         documentos: stored?.documentos ?? [],
         movimentacoes,
         createdAt: stored?.createdAt ?? new Date(),
