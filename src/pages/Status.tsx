@@ -132,7 +132,7 @@ export function Status() {
         0,
       );
 
-      const diferenca = balancete.saldoAtual - composicao;
+      const diferenca = Math.abs(balancete.saldoAtual) - Math.abs(composicao);
       const autoStatus: Conta['status'] = Math.abs(diferenca) < 0.01 ? 'CONCILIADO' : 'NAO_CONCILIADO';
 
       return {

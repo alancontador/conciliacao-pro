@@ -94,7 +94,7 @@ export const useAccountingStore = create<AccountingState>()(
                 : acc + m.credito - m.debito,
               0,
             );
-            const diferenca = balancete.saldoAtual - composicao;
+            const diferenca = Math.abs(balancete.saldoAtual) - Math.abs(composicao);
 
             return {
               numero: balancete.codigo,
