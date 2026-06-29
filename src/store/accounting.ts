@@ -2,35 +2,84 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { Conta, BalanceteRow, RazaoRow, ImportHistory, CompanyInfo, KPIData } from '@/types/accounting';
 import type { Usuario, ResetToken } from '@/types/usuario';
+import type { Empresa } from '@/types/empresa';
 import { hashPassword, verifyPassword, generateToken } from '@/lib/auth';
 
+// ── Dados por empresa ─────────────────────────────────────────────────────────
+
+interface EmpresaDados {
+  companyInfo: CompanyInfo;
+  contas: Conta[];
+  balanceteData: BalanceteRow[];
+  razaoData: RazaoRow[];
+  importHistory: ImportHistory[];
+  reconciledRazaoIndices: number[];
+}
+
+const emptyDados: EmpresaDados = {
+  companyInfo: { nome: '', cnpj: '', periodo: '', responsavel: '' },
+  contas: [],
+  balanceteData: [],
+  razaoData: [],
+  importHistory: [],
+  reconciledRazaoIndices: [],
+};
+
+// Helper: atualiza os campos flat E o registro em dadosPorEmpresa ao mesmo tempo.
+// Assim nenhum componente existente precisa mudar — eles lêem sempre os campos flat.
+function sync(
+  state: { selectedEmpresaId: string | null; dadosPorEmpresa: Record<string, EmpresaDados> },
+  updates: Partial<EmpresaDados>,
+) {
+  if (!state.selectedEmpresaId) return updates as Record<string, unknown>;
+  return {
+    ...updates,
+    dadosPorEmpresa: {
+      ...state.dadosPorEmpresa,
+      [state.selectedEmpresaId]: {
+        ...(state.dadosPorEmpresa[state.selectedEmpresaId] ?? emptyDados),
+        ...updates,
+      },
+    },
+  };
+}
+
+// ── Interface do store ────────────────────────────────────────────────────────
+
 interface AccountingState {
-  // Company and session data
+  // Campos ativos (empresa selecionada) — lidos por todos os componentes
   companyInfo: CompanyInfo;
   setCompanyInfo: (info: CompanyInfo) => void;
 
-  // Accounts data
   contas: Conta[];
   setContas: (contas: Conta[]) => void;
   updateConta: (numero: string, updates: Partial<Conta>) => void;
 
-  // Import data
   balanceteData: BalanceteRow[];
   razaoData: RazaoRow[];
   setBalanceteData: (data: BalanceteRow[]) => void;
   setRazaoData: (data: RazaoRow[]) => void;
 
-  // Import history
   importHistory: ImportHistory[];
   addImportHistory: (history: ImportHistory) => void;
 
-  // Calculations
+  reconciledRazaoIndices: number[];
+  reconcileRazaoTransactions: (indices: number[]) => void;
+  unreconcileRazaoTransactions: (indices: number[]) => void;
+
   calculateKPIs: () => KPIData;
   reconcileAccount: (numero: string, status: Conta['status']) => void;
-
-  // Edição e exclusão de lançamentos do razão
   updateRazaoTransaction: (index: number, updates: Partial<RazaoRow>) => void;
   deleteRazaoTransaction: (index: number) => void;
+
+  // Multi-empresa
+  empresas: Empresa[];
+  selectedEmpresaId: string | null;
+  dadosPorEmpresa: Record<string, EmpresaDados>;
+  addEmpresa: (e: Omit<Empresa, 'id' | 'createdAt' | 'updatedAt'>) => string;
+  updateEmpresa: (id: string, updates: Partial<Omit<Empresa, 'id' | 'createdAt'>>) => void;
+  deleteEmpresa: (id: string) => void;
+  selectEmpresa: (id: string) => void;
 
   // Usuários
   usuarios: Usuario[];
@@ -47,62 +96,216 @@ interface AccountingState {
   setUserPassword: (userId: string, password: string) => Promise<void>;
   requestPasswordReset: (email: string) => string | null;
   confirmPasswordReset: (token: string, newPassword: string) => Promise<boolean>;
-
-  // Conciliação de lançamentos individuais do razão
-  reconciledRazaoIndices: number[];
-  reconcileRazaoTransactions: (indices: number[]) => void;
-  unreconcileRazaoTransactions: (indices: number[]) => void;
 }
+
+// ── Store ─────────────────────────────────────────────────────────────────────
 
 export const useAccountingStore = create<AccountingState>()(
   persist(
     (set, get) => ({
-      companyInfo: {
-        nome: '',
-        cnpj: '',
-        periodo: '',
-        responsavel: '',
-      },
-
+      // Estado inicial — campos flat
+      companyInfo: { nome: '', cnpj: '', periodo: '', responsavel: '' },
       contas: [],
       balanceteData: [],
       razaoData: [],
       importHistory: [],
+      reconciledRazaoIndices: [],
+
+      // Multi-empresa
+      empresas: [],
+      selectedEmpresaId: null,
+      dadosPorEmpresa: {},
+
+      // Auth
       usuarios: [],
       currentUser: null,
       resetTokens: [],
-      reconciledRazaoIndices: [],
 
-      setCompanyInfo: (info) => set({ companyInfo: info }),
+      // ── Setters com sync duplo ──────────────────────────────────────────────
 
-      setContas: (contas) => set({ contas }),
+      setCompanyInfo: (companyInfo) =>
+        set((state) => sync(state, { companyInfo })),
 
-      updateConta: (numero, updates) => 
-        set((state) => ({
-          contas: state.contas.map((conta) =>
-            conta.numero === numero 
-              ? { ...conta, ...updates, updatedAt: new Date() }
-              : conta
-          ),
-        })),
+      setContas: (contas) =>
+        set((state) => sync(state, { contas })),
 
-      setBalanceteData: (data) => set({ balanceteData: data }),
+      updateConta: (numero, updates) =>
+        set((state) => {
+          const contas = state.contas.map((c) =>
+            c.numero === numero ? { ...c, ...updates, updatedAt: new Date() } : c,
+          );
+          return sync(state, { contas });
+        }),
 
-      setRazaoData: (data) => set({ razaoData: data }),
+      setBalanceteData: (balanceteData) =>
+        set((state) => sync(state, { balanceteData })),
+
+      setRazaoData: (razaoData) =>
+        set((state) => sync(state, { razaoData })),
 
       addImportHistory: (history) =>
-        set((state) => ({
-          importHistory: [history, ...state.importHistory],
-        })),
+        set((state) => sync(state, { importHistory: [history, ...state.importHistory] })),
+
+      reconcileAccount: (numero, status) =>
+        set((state) => {
+          const contas = state.contas.map((c) =>
+            c.numero === numero ? { ...c, status, updatedAt: new Date() } : c,
+          );
+          return sync(state, { contas });
+        }),
+
+      updateRazaoTransaction: (index, updates) =>
+        set((state) => {
+          const razaoData = [...state.razaoData];
+          razaoData[index] = { ...razaoData[index], ...updates };
+          return sync(state, { razaoData });
+        }),
+
+      deleteRazaoTransaction: (index) =>
+        set((state) => {
+          const razaoData = state.razaoData.filter((_, i) => i !== index);
+          const reconciledRazaoIndices = state.reconciledRazaoIndices
+            .filter((i) => i !== index)
+            .map((i) => (i > index ? i - 1 : i));
+          return sync(state, { razaoData, reconciledRazaoIndices });
+        }),
+
+      reconcileRazaoTransactions: (indices) =>
+        set((state) => {
+          const reconciledRazaoIndices = [...new Set([...state.reconciledRazaoIndices, ...indices])];
+          return sync(state, { reconciledRazaoIndices });
+        }),
+
+      unreconcileRazaoTransactions: (indices) =>
+        set((state) => {
+          const remove = new Set(indices);
+          const reconciledRazaoIndices = state.reconciledRazaoIndices.filter((i) => !remove.has(i));
+          return sync(state, { reconciledRazaoIndices });
+        }),
+
+      // ── Multi-empresa ───────────────────────────────────────────────────────
+
+      addEmpresa: (e) => {
+        const id = crypto.randomUUID();
+        const nova: Empresa = { ...e, id, createdAt: new Date(), updatedAt: new Date() };
+        set((state) => {
+          const isFirst = state.empresas.length === 0;
+          const novosDados: Record<string, EmpresaDados> = {
+            ...state.dadosPorEmpresa,
+            [id]: emptyDados,
+          };
+          if (isFirst) {
+            // Se é a primeira empresa e já existe dados legados, associa a ela
+            const temDados =
+              state.contas.length > 0 ||
+              state.balanceteData.length > 0 ||
+              state.razaoData.length > 0;
+            if (temDados) {
+              novosDados[id] = {
+                companyInfo: state.companyInfo,
+                contas: state.contas,
+                balanceteData: state.balanceteData,
+                razaoData: state.razaoData,
+                importHistory: state.importHistory,
+                reconciledRazaoIndices: state.reconciledRazaoIndices,
+              };
+            }
+            return {
+              empresas: [...state.empresas, nova],
+              selectedEmpresaId: id,
+              dadosPorEmpresa: novosDados,
+              companyInfo: { nome: nova.razaoSocial, cnpj: nova.cnpj, periodo: nova.periodo, responsavel: nova.responsavel },
+              ...(temDados ? {} : { contas: [], balanceteData: [], razaoData: [], importHistory: [], reconciledRazaoIndices: [] }),
+            };
+          }
+          return { empresas: [...state.empresas, nova], dadosPorEmpresa: novosDados };
+        });
+        return id;
+      },
+
+      updateEmpresa: (id, updates) =>
+        set((state) => {
+          const empresas = state.empresas.map((e) =>
+            e.id === id ? { ...e, ...updates, updatedAt: new Date() } : e,
+          );
+          // Se é a empresa ativa, atualiza também companyInfo
+          const extra =
+            state.selectedEmpresaId === id
+              ? {
+                  companyInfo: {
+                    nome: (updates.razaoSocial ?? state.empresas.find((e) => e.id === id)?.razaoSocial) ?? '',
+                    cnpj: (updates.cnpj ?? state.empresas.find((e) => e.id === id)?.cnpj) ?? '',
+                    periodo: (updates.periodo ?? state.empresas.find((e) => e.id === id)?.periodo) ?? '',
+                    responsavel: (updates.responsavel ?? state.empresas.find((e) => e.id === id)?.responsavel) ?? '',
+                  },
+                }
+              : {};
+          return { empresas, ...extra };
+        }),
+
+      deleteEmpresa: (id) =>
+        set((state) => {
+          const empresas = state.empresas.filter((e) => e.id !== id);
+          const { [id]: _removed, ...restDados } = state.dadosPorEmpresa;
+          // Se excluiu a empresa ativa, seleciona a próxima ou limpa
+          if (state.selectedEmpresaId === id) {
+            const proxima = empresas[0];
+            if (proxima) {
+              const dados = restDados[proxima.id] ?? emptyDados;
+              return {
+                empresas,
+                dadosPorEmpresa: restDados,
+                selectedEmpresaId: proxima.id,
+                ...dados,
+                companyInfo: { nome: proxima.razaoSocial, cnpj: proxima.cnpj, periodo: proxima.periodo, responsavel: proxima.responsavel },
+              };
+            }
+            return { empresas, dadosPorEmpresa: restDados, selectedEmpresaId: null, ...emptyDados };
+          }
+          return { empresas, dadosPorEmpresa: restDados };
+        }),
+
+      selectEmpresa: (id) =>
+        set((state) => {
+          // Salva dados atuais da empresa em uso
+          const dadosAtualizados: Record<string, EmpresaDados> = {
+            ...state.dadosPorEmpresa,
+            ...(state.selectedEmpresaId
+              ? {
+                  [state.selectedEmpresaId]: {
+                    companyInfo: state.companyInfo,
+                    contas: state.contas,
+                    balanceteData: state.balanceteData,
+                    razaoData: state.razaoData,
+                    importHistory: state.importHistory,
+                    reconciledRazaoIndices: state.reconciledRazaoIndices,
+                  },
+                }
+              : {}),
+          };
+          // Carrega dados da nova empresa
+          const nova = state.empresas.find((e) => e.id === id);
+          const dados = dadosAtualizados[id] ?? emptyDados;
+          return {
+            selectedEmpresaId: id,
+            dadosPorEmpresa: dadosAtualizados,
+            ...dados,
+            companyInfo: nova
+              ? { nome: nova.razaoSocial, cnpj: nova.cnpj, periodo: nova.periodo, responsavel: nova.responsavel }
+              : dados.companyInfo,
+          };
+        }),
+
+      // ── KPIs ───────────────────────────────────────────────────────────────
 
       calculateKPIs: () => {
         const { contas, balanceteData, razaoData } = get();
 
         let effectiveContas = contas;
         if (contas.length === 0 && balanceteData.length > 0) {
-          effectiveContas = balanceteData.map(balancete => {
+          effectiveContas = balanceteData.map((balancete) => {
             const movimentacoes = razaoData
-              .filter(r => r.conta.trim() === balancete.codigo.trim())
+              .filter((r) => r.conta.trim() === balancete.codigo.trim())
               .map((r, i) => ({
                 id: `${balancete.codigo}-${i}`,
                 data: r.data,
@@ -114,9 +317,8 @@ export const useAccountingStore = create<AccountingState>()(
               }));
 
             const composicao = movimentacoes.reduce(
-              (acc, m) => balancete.natureza === 'ATIVO'
-                ? acc + m.debito - m.credito
-                : acc + m.credito - m.debito,
+              (acc, m) =>
+                balancete.natureza === 'ATIVO' ? acc + m.debito - m.credito : acc + m.credito - m.debito,
               0,
             );
             const diferenca = Math.abs(balancete.saldoAtual) - Math.abs(composicao);
@@ -138,9 +340,9 @@ export const useAccountingStore = create<AccountingState>()(
         }
 
         const totalContas = effectiveContas.length;
-        const contasConciliadas = effectiveContas.filter(c => c.status === 'CONCILIADO').length;
-        const contasPendentes = effectiveContas.filter(c => c.status === 'NAO_CONCILIADO').length;
-        const contasAlerta = effectiveContas.filter(c => {
+        const contasConciliadas = effectiveContas.filter((c) => c.status === 'CONCILIADO').length;
+        const contasPendentes = effectiveContas.filter((c) => c.status === 'NAO_CONCILIADO').length;
+        const contasAlerta = effectiveContas.filter((c) => {
           if (!c.prazoRegularizacao) return false;
           return new Date() > c.prazoRegularizacao;
         }).length;
@@ -155,14 +357,7 @@ export const useAccountingStore = create<AccountingState>()(
         };
       },
 
-      reconcileAccount: (numero, status) =>
-        set((state) => ({
-          contas: state.contas.map((conta) =>
-            conta.numero === numero
-              ? { ...conta, status, updatedAt: new Date() }
-              : conta
-          ),
-        })),
+      // ── Usuários ───────────────────────────────────────────────────────────
 
       addUsuario: (u) =>
         set((state) => ({
@@ -175,9 +370,8 @@ export const useAccountingStore = create<AccountingState>()(
       updateUsuario: (id, updates) =>
         set((state) => ({
           usuarios: state.usuarios.map((u) =>
-            u.id === id ? { ...u, ...updates, updatedAt: new Date() } : u
+            u.id === id ? { ...u, ...updates, updatedAt: new Date() } : u,
           ),
-          // Atualiza currentUser se for o mesmo
           currentUser:
             state.currentUser?.id === id
               ? { ...state.currentUser, ...updates, updatedAt: new Date() }
@@ -186,6 +380,8 @@ export const useAccountingStore = create<AccountingState>()(
 
       deleteUsuario: (id) =>
         set((state) => ({ usuarios: state.usuarios.filter((u) => u.id !== id) })),
+
+      // ── Autenticação ───────────────────────────────────────────────────────
 
       login: async (email, password) => {
         const { usuarios } = get();
@@ -216,6 +412,7 @@ export const useAccountingStore = create<AccountingState>()(
             importar: true,
             exportar: true,
             gerenciarUsuarios: true,
+            gerenciarEmpresas: true,
           },
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -227,7 +424,7 @@ export const useAccountingStore = create<AccountingState>()(
         const senhaHash = await hashPassword(password);
         set((state) => ({
           usuarios: state.usuarios.map((u) =>
-            u.id === userId ? { ...u, senhaHash, updatedAt: new Date() } : u
+            u.id === userId ? { ...u, senhaHash, updatedAt: new Date() } : u,
           ),
         }));
       },
@@ -237,7 +434,7 @@ export const useAccountingStore = create<AccountingState>()(
         const user = usuarios.find((u) => u.email.toLowerCase() === email.toLowerCase());
         if (!user) return null;
         const token = generateToken();
-        const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24h
+        const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
         set((state) => ({
           resetTokens: [
             ...state.resetTokens.filter((t) => t.email !== email),
@@ -256,42 +453,16 @@ export const useAccountingStore = create<AccountingState>()(
         const senhaHash = await hashPassword(newPassword);
         set((state) => ({
           usuarios: state.usuarios.map((u) =>
-            u.id === user.id ? { ...u, senhaHash, updatedAt: new Date() } : u
+            u.id === user.id ? { ...u, senhaHash, updatedAt: new Date() } : u,
           ),
           resetTokens: state.resetTokens.filter((t) => t.token !== token),
         }));
         return true;
       },
-
-      updateRazaoTransaction: (index, updates) =>
-        set((state) => {
-          const next = [...state.razaoData];
-          next[index] = { ...next[index], ...updates };
-          return { razaoData: next };
-        }),
-
-      deleteRazaoTransaction: (index) =>
-        set((state) => ({
-          razaoData: state.razaoData.filter((_, i) => i !== index),
-          reconciledRazaoIndices: state.reconciledRazaoIndices
-            .filter(i => i !== index)
-            .map(i => (i > index ? i - 1 : i)),
-        })),
-
-      reconcileRazaoTransactions: (indices) =>
-        set((state) => ({
-          reconciledRazaoIndices: [...new Set([...state.reconciledRazaoIndices, ...indices])],
-        })),
-
-      unreconcileRazaoTransactions: (indices) =>
-        set((state) => {
-          const remove = new Set(indices);
-          return { reconciledRazaoIndices: state.reconciledRazaoIndices.filter(i => !remove.has(i)) };
-        }),
     }),
     {
       name: 'accounting-store',
       storage: createJSONStorage(() => localStorage),
-    }
-  )
+    },
+  ),
 );

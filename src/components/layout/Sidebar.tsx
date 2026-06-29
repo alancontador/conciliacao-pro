@@ -7,9 +7,9 @@ import {
   BarChart3,
   Settings,
   Users,
+  Building2,
   ChevronLeft,
   ChevronRight,
-  Building2,
   LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -29,6 +29,7 @@ const navigation: NavItem[] = [
   { name: 'Status das Contas', href: '/status', icon: BarChart3, permission: 'verStatus' },
   { name: 'Importar Balancete', href: '/import/balancete', icon: Upload, permission: 'importar' },
   { name: 'Importar Razão', href: '/import/razao', icon: FileSpreadsheet, permission: 'importar' },
+  { name: 'Empresas', href: '/empresas', icon: Building2 },
   { name: 'Usuários', href: '/usuarios', icon: Users, permission: 'gerenciarUsuarios' },
   { name: 'Configurações', href: '/settings', icon: Settings },
 ];

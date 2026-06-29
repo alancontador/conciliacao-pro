@@ -8,6 +8,7 @@ export interface PermissoesUsuario {
   importar: boolean;
   exportar: boolean;
   gerenciarUsuarios: boolean;
+  gerenciarEmpresas: boolean;
 }
 
 export interface Usuario {
@@ -42,6 +43,7 @@ export const PERMISSAO_LABELS: Record<keyof PermissoesUsuario, string> = {
   importar: 'Importar Arquivos',
   exportar: 'Exportar Dados',
   gerenciarUsuarios: 'Gerenciar Usuários',
+  gerenciarEmpresas: 'Gerenciar Empresas',
 };
 
 export const DEFAULT_PERMISSOES: Record<UsuarioRole, PermissoesUsuario> = {
@@ -52,6 +54,7 @@ export const DEFAULT_PERMISSOES: Record<UsuarioRole, PermissoesUsuario> = {
     importar: true,
     exportar: true,
     gerenciarUsuarios: true,
+    gerenciarEmpresas: true,
   },
   gerente: {
     verDashboard: true,
@@ -60,6 +63,7 @@ export const DEFAULT_PERMISSOES: Record<UsuarioRole, PermissoesUsuario> = {
     importar: false,
     exportar: true,
     gerenciarUsuarios: false,
+    gerenciarEmpresas: true,
   },
   analista: {
     verDashboard: true,
@@ -68,6 +72,7 @@ export const DEFAULT_PERMISSOES: Record<UsuarioRole, PermissoesUsuario> = {
     importar: true,
     exportar: true,
     gerenciarUsuarios: false,
+    gerenciarEmpresas: false,
   },
   visualizador: {
     verDashboard: true,
@@ -76,5 +81,6 @@ export const DEFAULT_PERMISSOES: Record<UsuarioRole, PermissoesUsuario> = {
     importar: false,
     exportar: false,
     gerenciarUsuarios: false,
+    gerenciarEmpresas: false,
   },
 };

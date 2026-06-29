@@ -11,6 +11,7 @@ import { ImportBalancete } from "@/pages/ImportBalancete";
 import { ImportRazao } from "@/pages/ImportRazao";
 import { Settings } from "@/pages/Settings";
 import { Usuarios } from "@/pages/Usuarios";
+import { Empresas } from "@/pages/Empresas";
 import { Login } from "@/pages/Login";
 import { ResetPassword } from "@/pages/ResetPassword";
 import NotFound from "./pages/NotFound";
@@ -58,6 +59,14 @@ const App = () => (
             element={
               <ProtectedRoute permission="importar">
                 <Layout><ImportRazao /></Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/empresas"
+            element={
+              <ProtectedRoute>
+                <Layout><Empresas /></Layout>
               </ProtectedRoute>
             }
           />
