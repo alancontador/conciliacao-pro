@@ -8,36 +8,31 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Building2, Lock, Mail, Eye, EyeOff, UserPlus, KeyRound } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
-type Tab = 'login' | 'setup-admin' | 'definir-senha';
+type Tab = 'login' | 'signup' | 'reset';
 
 export function Login() {
-  const { usuarios, login, createFirstAdmin, setUserPassword } = useAccountingStore();
+  const { login, signUpTenant, requestPasswordReset } = useAccountingStore();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const semSenha = usuarios.filter((u) => !u.senhaHash);
-  const isFirstAccess = usuarios.length === 0;
-
-  const [tab, setTab] = useState<Tab>(isFirstAccess ? 'setup-admin' : 'login');
+  const [tab, setTab] = useState<Tab>('login');
   const [loading, setLoading] = useState(false);
-
-  // --- Login ---
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
 
-  // --- Setup admin ---
-  const [adminNome, setAdminNome] = useState('');
-  const [adminEmail, setAdminEmail] = useState('');
-  const [adminPass, setAdminPass] = useState('');
-  const [adminPass2, setAdminPass2] = useState('');
-  const [showAdminPass, setShowAdminPass] = useState(false);
+  // Login
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
-  // --- Definir senha inicial ---
-  const [defEmail, setDefEmail] = useState('');
-  const [defPass, setDefPass] = useState('');
-  const [defPass2, setDefPass2] = useState('');
-  const [showDefPass, setShowDefPass] = useState(false);
+  // Signup
+  const [tenantNome, setTenantNome] = useState('');
+  const [tenantCnpj, setTenantCnpj] = useState('');
+  const [adminNome, setAdminNome] = useState('');
+  const [signupEmail, setSignupEmail] = useState('');
+  const [signupPass, setSignupPass] = useState('');
+  const [signupPass2, setSignupPass2] = useState('');
+
+  // Reset
+  const [resetEmail, setResetEmail] = useState('');
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,52 +49,52 @@ export function Login() {
     }
   };
 
-  const handleCreateAdmin = async (e: React.FormEvent) => {
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!adminNome || !adminEmail || !adminPass) {
-      toast({ title: 'Preencha todos os campos', variant: 'destructive' });
+    if (!tenantNome.trim() || !adminNome.trim() || !signupEmail.trim() || !signupPass) {
+      toast({ title: 'Preencha todos os campos obrigatórios', variant: 'destructive' });
       return;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)) {
-      toast({ title: 'E-mail inválido', variant: 'destructive' });
-      return;
-    }
-    if (adminPass.length < 6) {
+    if (signupPass.length < 6) {
       toast({ title: 'Senha deve ter pelo menos 6 caracteres', variant: 'destructive' });
       return;
     }
-    if (adminPass !== adminPass2) {
+    if (signupPass !== signupPass2) {
       toast({ title: 'As senhas não coincidem', variant: 'destructive' });
       return;
     }
     setLoading(true);
-    await createFirstAdmin(adminNome, adminEmail, adminPass);
-    setLoading(false);
-    toast({ title: 'Administrador criado! Bem-vindo ao sistema.' });
-    navigate('/', { replace: true });
+    try {
+      await signUpTenant({
+        tenantNome: tenantNome.trim(),
+        tenantCnpj: tenantCnpj.trim() || undefined,
+        adminNome: adminNome.trim(),
+        email: signupEmail.trim(),
+        password: signupPass,
+      });
+      toast({ title: 'Escritório criado! Bem-vindo ao ConciliaçãoPRO.' });
+      navigate('/', { replace: true });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erro ao criar conta';
+      toast({ title: msg, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleDefinirSenha = async (e: React.FormEvent) => {
+  const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
-    const user = semSenha.find((u) => u.email.toLowerCase() === defEmail.toLowerCase());
-    if (!user) {
-      toast({ title: 'E-mail não encontrado ou usuário já possui senha', variant: 'destructive' });
-      return;
-    }
-    if (defPass.length < 6) {
-      toast({ title: 'Senha deve ter pelo menos 6 caracteres', variant: 'destructive' });
-      return;
-    }
-    if (defPass !== defPass2) {
-      toast({ title: 'As senhas não coincidem', variant: 'destructive' });
-      return;
-    }
+    if (!resetEmail.trim()) return;
     setLoading(true);
-    await setUserPassword(user.id, defPass);
-    setLoading(false);
-    toast({ title: `Senha definida para ${user.nome}. Faça login agora.` });
-    setEmail(user.email);
-    setTab('login');
+    try {
+      await requestPasswordReset(resetEmail.trim());
+      toast({ title: 'E-mail de recuperação enviado!', description: 'Verifique sua caixa de entrada.' });
+      setTab('login');
+    } catch {
+      toast({ title: 'E-mail não encontrado', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -115,66 +110,6 @@ export function Login() {
           <p className="text-sm text-muted-foreground">Sistema de Conciliação Contábil</p>
         </div>
 
-        {/* ── SETUP ADMIN ── */}
-        {tab === 'setup-admin' && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <UserPlus className="w-5 h-5" />
-                Configurar primeiro acesso
-              </CardTitle>
-              <CardDescription>
-                Crie a conta de administrador para começar a usar o sistema.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleCreateAdmin} className="space-y-4">
-                <div className="space-y-1">
-                  <Label>Nome completo</Label>
-                  <Input placeholder="Seu nome" value={adminNome} onChange={(e) => setAdminNome(e.target.value)} autoFocus />
-                </div>
-                <div className="space-y-1">
-                  <Label>E-mail</Label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input type="email" placeholder="admin@empresa.com" className="pl-9" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label>Senha</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input type={showAdminPass ? 'text' : 'password'} placeholder="Mínimo 6 caracteres" className="pl-9 pr-9" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} />
-                    <button type="button" tabIndex={-1} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" onClick={() => setShowAdminPass((p) => !p)}>
-                      {showAdminPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label>Confirmar senha</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input type={showAdminPass ? 'text' : 'password'} placeholder="Repita a senha" className="pl-9" value={adminPass2} onChange={(e) => setAdminPass2(e.target.value)} />
-                  </div>
-                </div>
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? 'Criando...' : 'Criar administrador e entrar'}
-                </Button>
-              </form>
-
-              <div className="mt-4 pt-4 border-t text-center">
-                <button
-                  type="button"
-                  className="text-sm text-primary hover:underline"
-                  onClick={() => setTab('login')}
-                >
-                  Já possuo conta — ir para o login
-                </button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
         {/* ── LOGIN ── */}
         {tab === 'login' && (
           <Card>
@@ -188,15 +123,19 @@ export function Login() {
                   <Label>E-mail</Label>
                   <div className="relative">
                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input type="email" placeholder="seu@email.com" className="pl-9" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+                    <Input type="email" placeholder="seu@email.com" className="pl-9"
+                      value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
                   </div>
                 </div>
                 <div className="space-y-1">
                   <Label>Senha</Label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input type={showPass ? 'text' : 'password'} placeholder="••••••••" className="pl-9 pr-9" value={password} onChange={(e) => setPassword(e.target.value)} />
-                    <button type="button" tabIndex={-1} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" onClick={() => setShowPass((p) => !p)}>
+                    <Input type={showPass ? 'text' : 'password'} placeholder="••••••••" className="pl-9 pr-9"
+                      value={password} onChange={(e) => setPassword(e.target.value)} />
+                    <button type="button" tabIndex={-1}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                      onClick={() => setShowPass((p) => !p)}>
                       {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
@@ -206,78 +145,124 @@ export function Login() {
                 </Button>
               </form>
 
-              {/* Links auxiliares */}
-              <div className="mt-4 pt-4 border-t flex flex-col gap-1 text-center">
-                {semSenha.length > 0 && (
-                  <button
-                    type="button"
-                    className="text-sm text-primary hover:underline"
-                    onClick={() => setTab('definir-senha')}
-                  >
-                    Primeiro acesso? Defina sua senha aqui
-                  </button>
-                )}
-                {isFirstAccess && (
-                  <button
-                    type="button"
-                    className="text-sm text-muted-foreground hover:underline"
-                    onClick={() => setTab('setup-admin')}
-                  >
-                    Criar conta de administrador
-                  </button>
-                )}
+              <div className="mt-4 pt-4 border-t flex flex-col gap-2 text-center">
+                <button type="button" className="text-sm text-primary hover:underline"
+                  onClick={() => setTab('reset')}>
+                  Esqueci minha senha
+                </button>
+                <button type="button" className="text-sm text-muted-foreground hover:underline"
+                  onClick={() => setTab('signup')}>
+                  Novo escritório? Criar conta
+                </button>
               </div>
             </CardContent>
           </Card>
         )}
 
-        {/* ── DEFINIR SENHA INICIAL ── */}
-        {tab === 'definir-senha' && (
+        {/* ── SIGNUP DE NOVO ESCRITÓRIO ── */}
+        {tab === 'signup' && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <KeyRound className="w-5 h-5" />
-                Definir senha de acesso
+                <UserPlus className="w-5 h-5" />
+                Criar conta do escritório
               </CardTitle>
               <CardDescription>
-                Para usuários cadastrados que ainda não possuem senha.
+                Registre seu escritório de contabilidade para começar.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleDefinirSenha} className="space-y-4">
+              <form onSubmit={handleSignup} className="space-y-3">
                 <div className="space-y-1">
-                  <Label>Seu e-mail</Label>
+                  <Label>Nome do escritório <span className="text-destructive">*</span></Label>
+                  <Input placeholder="Ex: Contabilidade Silva & Associados"
+                    value={tenantNome} onChange={(e) => setTenantNome(e.target.value)} autoFocus />
+                </div>
+                <div className="space-y-1">
+                  <Label>CNPJ do escritório</Label>
+                  <Input placeholder="00.000.000/0000-00"
+                    value={tenantCnpj} onChange={(e) => setTenantCnpj(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label>Seu nome (administrador) <span className="text-destructive">*</span></Label>
+                  <Input placeholder="Nome completo"
+                    value={adminNome} onChange={(e) => setAdminNome(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label>E-mail <span className="text-destructive">*</span></Label>
                   <div className="relative">
                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input type="email" placeholder="seu@email.com" className="pl-9" value={defEmail} onChange={(e) => setDefEmail(e.target.value)} autoFocus />
+                    <Input type="email" placeholder="admin@escritorio.com" className="pl-9"
+                      value={signupEmail} onChange={(e) => setSignupEmail(e.target.value)} />
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <Label>Nova senha</Label>
+                  <Label>Senha <span className="text-destructive">*</span></Label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input type={showDefPass ? 'text' : 'password'} placeholder="Mínimo 6 caracteres" className="pl-9 pr-9" value={defPass} onChange={(e) => setDefPass(e.target.value)} />
-                    <button type="button" tabIndex={-1} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" onClick={() => setShowDefPass((p) => !p)}>
-                      {showDefPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    <Input type={showPass ? 'text' : 'password'} placeholder="Mínimo 6 caracteres" className="pl-9 pr-9"
+                      value={signupPass} onChange={(e) => setSignupPass(e.target.value)} />
+                    <button type="button" tabIndex={-1}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                      onClick={() => setShowPass((p) => !p)}>
+                      {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <Label>Confirmar senha</Label>
+                  <Label>Confirmar senha <span className="text-destructive">*</span></Label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input type={showDefPass ? 'text' : 'password'} placeholder="Repita a senha" className="pl-9" value={defPass2} onChange={(e) => setDefPass2(e.target.value)} />
+                    <Input type={showPass ? 'text' : 'password'} placeholder="Repita a senha" className="pl-9"
+                      value={signupPass2} onChange={(e) => setSignupPass2(e.target.value)} />
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button type="button" variant="outline" className="flex-1" onClick={() => setTab('login')}>
-                    Voltar
-                  </Button>
-                  <Button type="submit" className="flex-1" disabled={loading}>
-                    {loading ? 'Salvando...' : 'Definir senha'}
-                  </Button>
-                </div>
+                <Button type="submit" className="w-full mt-1" disabled={loading}>
+                  {loading ? 'Criando...' : 'Criar escritório e entrar'}
+                </Button>
               </form>
+              <div className="mt-4 pt-4 border-t text-center">
+                <button type="button" className="text-sm text-muted-foreground hover:underline"
+                  onClick={() => setTab('login')}>
+                  Já tenho conta — fazer login
+                </button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── RECUPERAR SENHA ── */}
+        {tab === 'reset' && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <KeyRound className="w-5 h-5" />
+                Recuperar senha
+              </CardTitle>
+              <CardDescription>
+                Enviaremos um link de redefinição para o seu e-mail.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleReset} className="space-y-4">
+                <div className="space-y-1">
+                  <Label>E-mail cadastrado</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input type="email" placeholder="seu@email.com" className="pl-9"
+                      value={resetEmail} onChange={(e) => setResetEmail(e.target.value)} autoFocus />
+                  </div>
+                </div>
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? 'Enviando...' : 'Enviar link de recuperação'}
+                </Button>
+              </form>
+              <div className="mt-4 pt-4 border-t text-center">
+                <button type="button" className="text-sm text-muted-foreground hover:underline"
+                  onClick={() => setTab('login')}>
+                  Voltar para o login
+                </button>
+              </div>
             </CardContent>
           </Card>
         )}

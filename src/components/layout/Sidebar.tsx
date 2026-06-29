@@ -53,8 +53,8 @@ export function Sidebar() {
     (item) => !item.permission || currentUser?.permissoes[item.permission],
   );
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/login', { replace: true });
   };
 

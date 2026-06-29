@@ -1,70 +1,60 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { supabase } from '@/lib/supabase';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Building2, Lock, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { loadConviteByToken, aceitarConvite } from '@/services/supabase.service';
+import type { DbConvite } from '@/lib/supabase';
 
-export function ResetPassword() {
+export function AceitarConvite() {
+  const [params] = useSearchParams();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const [ready, setReady] = useState(false);
+  const token = params.get('token') ?? '';
+
+  const [convite, setConvite] = useState<DbConvite | null>(null);
+  const [loading, setLoading] = useState(true);
   const [invalid, setInvalid] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const [nome, setNome] = useState('');
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
   const [showPass, setShowPass] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  // Supabase coloca os tokens de recovery no hash da URL
   useEffect(() => {
-    supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setReady(true);
-      } else if (event === 'SIGNED_IN') {
-        // já tem sessão válida para trocar a senha
-        setReady(true);
-      }
+    if (!token) { setInvalid(true); setLoading(false); return; }
+    loadConviteByToken(token).then((c) => {
+      if (!c || new Date(c.expires_at) < new Date()) setInvalid(true);
+      else { setConvite(c); setNome(c.nome); }
+      setLoading(false);
     });
-
-    // Verifica se já tem sessão de recovery ativa
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) setReady(true);
-      else {
-        // Aguarda um pouco para o hash ser processado
-        setTimeout(() => {
-          supabase.auth.getSession().then(({ data }) => {
-            if (!data.session) setInvalid(true);
-            else setReady(true);
-          });
-        }, 800);
-      }
-    });
-  }, []);
+  }, [token]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.length < 6) {
-      toast({ title: 'Senha deve ter pelo menos 6 caracteres', variant: 'destructive' });
-      return;
-    }
-    if (password !== password2) {
-      toast({ title: 'As senhas não coincidem', variant: 'destructive' });
-      return;
-    }
-    setLoading(true);
-    const { error } = await supabase.auth.updateUser({ password });
-    setLoading(false);
-    if (error) {
-      toast({ title: 'Erro ao redefinir senha', description: error.message, variant: 'destructive' });
-    } else {
+    if (!nome.trim()) { toast({ title: 'Informe seu nome', variant: 'destructive' }); return; }
+    if (password.length < 6) { toast({ title: 'Senha deve ter pelo menos 6 caracteres', variant: 'destructive' }); return; }
+    if (password !== password2) { toast({ title: 'As senhas não coincidem', variant: 'destructive' }); return; }
+    setSaving(true);
+    try {
+      await aceitarConvite(token, nome.trim(), password);
       setDone(true);
+    } catch (err: unknown) {
+      toast({ title: err instanceof Error ? err.message : 'Erro ao aceitar convite', variant: 'destructive' });
+    } finally {
+      setSaving(false);
     }
   };
+
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center"><p className="text-muted-foreground">Verificando convite...</p></div>;
+  }
 
   if (done) {
     return (
@@ -72,11 +62,9 @@ export function ResetPassword() {
         <Card className="w-full max-w-md text-center">
           <CardContent className="pt-10 pb-8 space-y-4">
             <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto" />
-            <h2 className="text-xl font-bold">Senha redefinida com sucesso!</h2>
-            <p className="text-muted-foreground text-sm">Você já pode entrar com a nova senha.</p>
-            <Button className="w-full" onClick={() => navigate('/login', { replace: true })}>
-              Ir para o login
-            </Button>
+            <h2 className="text-xl font-bold">Conta criada com sucesso!</h2>
+            <p className="text-muted-foreground text-sm">Você já pode fazer login com o e-mail e senha cadastrados.</p>
+            <Button className="w-full" onClick={() => navigate('/login', { replace: true })}>Fazer login</Button>
           </CardContent>
         </Card>
       </div>
@@ -89,23 +77,10 @@ export function ResetPassword() {
         <Card className="w-full max-w-md text-center">
           <CardContent className="pt-10 pb-8 space-y-4">
             <XCircle className="w-16 h-16 text-destructive mx-auto" />
-            <h2 className="text-xl font-bold">Link inválido ou expirado</h2>
-            <p className="text-muted-foreground text-sm">
-              Solicite um novo link de recuperação de senha.
-            </p>
-            <Button asChild variant="outline" className="w-full">
-              <Link to="/login">Voltar ao login</Link>
-            </Button>
+            <h2 className="text-xl font-bold">Convite inválido ou expirado</h2>
+            <p className="text-muted-foreground text-sm">Solicite um novo convite ao administrador do escritório.</p>
           </CardContent>
         </Card>
-      </div>
-    );
-  }
-
-  if (!ready) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-muted-foreground">Verificando link...</p>
       </div>
     );
   }
@@ -122,17 +97,24 @@ export function ResetPassword() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Redefinir senha</CardTitle>
-            <CardDescription>Digite e confirme sua nova senha de acesso.</CardDescription>
+            <CardTitle>Aceitar convite</CardTitle>
+            <CardDescription>
+              Você foi convidado para acessar o sistema.<br />
+              E-mail: <strong>{convite?.email}</strong>
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1">
-                <Label>Nova senha</Label>
+                <Label>Seu nome</Label>
+                <Input placeholder="Nome completo" value={nome} onChange={(e) => setNome(e.target.value)} autoFocus />
+              </div>
+              <div className="space-y-1">
+                <Label>Criar senha</Label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input type={showPass ? 'text' : 'password'} placeholder="Mínimo 6 caracteres"
-                    className="pl-9 pr-9" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+                    className="pl-9 pr-9" value={password} onChange={(e) => setPassword(e.target.value)} />
                   <button type="button" tabIndex={-1}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
                     onClick={() => setShowPass((p) => !p)}>
@@ -141,15 +123,15 @@ export function ResetPassword() {
                 </div>
               </div>
               <div className="space-y-1">
-                <Label>Confirmar nova senha</Label>
+                <Label>Confirmar senha</Label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input type={showPass ? 'text' : 'password'} placeholder="Repita a senha"
                     className="pl-9" value={password2} onChange={(e) => setPassword2(e.target.value)} />
                 </div>
               </div>
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Salvando...' : 'Redefinir senha'}
+              <Button type="submit" className="w-full" disabled={saving}>
+                {saving ? 'Criando conta...' : 'Criar conta e acessar'}
               </Button>
             </form>
           </CardContent>

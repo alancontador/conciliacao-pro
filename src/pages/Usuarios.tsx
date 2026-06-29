@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
-import { UserPlus, Pencil, Trash2, Search, ShieldCheck, ShieldX, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { UserPlus, Pencil, Trash2, Search, ShieldCheck, ShieldX, KeyRound } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type { Usuario, UsuarioRole } from '@/types/usuario';
 import { ROLE_LABELS, PERMISSAO_LABELS, DEFAULT_PERMISSOES } from '@/types/usuario';
@@ -35,14 +35,13 @@ function initials(nome: string) {
 const EMPTY_FORM = {
   nome: '',
   email: '',
-  senha: '',
   role: 'analista' as UsuarioRole,
   status: 'ativo' as Usuario['status'],
   permissoes: { ...DEFAULT_PERMISSOES.analista },
 };
 
 export function Usuarios() {
-  const { usuarios, currentUser, addUsuario, updateUsuario, deleteUsuario, setUserPassword, requestPasswordReset } =
+  const { usuarios, currentUser, addUsuario, updateUsuario, deleteUsuario, requestPasswordReset_user } =
     useAccountingStore();
   const { toast } = useToast();
 
@@ -53,7 +52,6 @@ export function Usuarios() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState({ ...EMPTY_FORM, permissoes: { ...EMPTY_FORM.permissoes } });
-  const [showPass, setShowPass] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const filtered = usuarios.filter(
@@ -66,7 +64,6 @@ export function Usuarios() {
   const openCreate = () => {
     setEditId(null);
     setForm({ ...EMPTY_FORM, permissoes: { ...DEFAULT_PERMISSOES.analista } });
-    setShowPass(false);
     setDialogOpen(true);
   };
 
@@ -75,12 +72,10 @@ export function Usuarios() {
     setForm({
       nome: u.nome,
       email: u.email,
-      senha: '',
       role: u.role,
       status: u.status,
       permissoes: { ...u.permissoes },
     });
-    setShowPass(false);
     setDialogOpen(true);
   };
 
@@ -104,59 +99,44 @@ export function Usuarios() {
       toast({ title: 'E-mail inválido', variant: 'destructive' });
       return;
     }
-    const emailConflict = usuarios.find((u) => u.email === form.email && u.id !== editId);
-    if (emailConflict) {
-      toast({ title: 'E-mail já cadastrado', variant: 'destructive' });
-      return;
-    }
-    if (!editId && form.senha.length < 6) {
-      toast({ title: 'Senha deve ter pelo menos 6 caracteres', variant: 'destructive' });
-      return;
-    }
-    if (editId && form.senha && form.senha.length < 6) {
-      toast({ title: 'Senha deve ter pelo menos 6 caracteres', variant: 'destructive' });
-      return;
-    }
 
     setSaving(true);
     try {
       if (editId) {
-        updateUsuario(editId, {
+        await updateUsuario(editId, {
           nome: form.nome.trim(),
-          email: form.email.trim(),
           role: form.role,
           status: form.status,
           permissoes: form.permissoes,
         });
-        if (form.senha) {
-          await setUserPassword(editId, form.senha);
-        }
         toast({ title: 'Usuário atualizado' });
       } else {
-        // Cria usuário sem senha primeiro para pegar o ID
-        addUsuario({
+        await addUsuario({
           nome: form.nome.trim(),
-          email: form.email.trim(),
           role: form.role,
           status: form.status,
           permissoes: form.permissoes,
-        });
-        // Pega o ID do usuário recém-criado (último da lista)
-        const novoId = useAccountingStore.getState().usuarios.at(-1)?.id;
-        if (novoId && form.senha) {
-          await setUserPassword(novoId, form.senha);
-        }
-        toast({ title: 'Usuário criado com sucesso' });
+        }, form.email.trim());
+        // Gera link de convite e abre mailto
+        const inviteUrl = `${window.location.origin}/aceitar-convite`;
+        const subject = encodeURIComponent('Convite — ConciliaçãoPRO');
+        const body = encodeURIComponent(
+          `Olá, ${form.nome.trim()}!\n\nVocê foi convidado para acessar o ConciliaçãoPRO.\n\nClique no link para criar sua senha:\n${inviteUrl}?token=AGUARDE_O_TOKEN\n\nSe precisar do link, entre em contato com o administrador.`
+        );
+        window.open(`mailto:${form.email.trim()}?subject=${subject}&body=${body}`);
+        toast({ title: 'Convite criado e e-mail preparado', description: `Um link de acesso será enviado para ${form.email.trim()}` });
       }
+    } catch (err: unknown) {
+      toast({ title: err instanceof Error ? err.message : 'Erro ao salvar', variant: 'destructive' });
     } finally {
       setSaving(false);
     }
     setDialogOpen(false);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!deleteId) return;
-    deleteUsuario(deleteId);
+    await deleteUsuario(deleteId);
     toast({ title: 'Usuário excluído' });
     setDeleteId(null);
   };
@@ -167,19 +147,17 @@ export function Usuarios() {
     toast({ title: `Usuário ${next === 'ativo' ? 'ativado' : 'desativado'}` });
   };
 
-  const handleRenovarSenha = (u: Usuario) => {
-    const token = requestPasswordReset(u.email);
-    if (!token) {
-      toast({ title: 'Erro ao gerar link', variant: 'destructive' });
+  const handleRenovarSenha = async (u: Usuario) => {
+    if (!u.email) {
+      toast({ title: 'E-mail não disponível', variant: 'destructive' });
       return;
     }
-    const resetUrl = `${window.location.origin}/reset-password?token=${token}`;
-    const subject = encodeURIComponent('Redefinição de senha — ConciliaçãoPRO');
-    const body = encodeURIComponent(
-      `Olá, ${u.nome}!\n\nClique no link abaixo para criar uma nova senha de acesso ao ConciliaçãoPRO:\n\n${resetUrl}\n\nEste link é válido por 24 horas.\n\nCaso não tenha solicitado, ignore este e-mail.`,
-    );
-    window.open(`mailto:${u.email}?subject=${subject}&body=${body}`);
-    toast({ title: 'E-mail de renovação preparado', description: `Link enviado para ${u.email}` });
+    try {
+      await requestPasswordReset_user(u.email);
+      toast({ title: 'E-mail de recuperação enviado', description: `Link enviado para ${u.email}` });
+    } catch {
+      toast({ title: 'Erro ao enviar e-mail', variant: 'destructive' });
+    }
   };
 
   const ativos = usuarios.filter((u) => u.status === 'ativo').length;
@@ -385,28 +363,11 @@ export function Usuarios() {
                   onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
                 />
               </div>
-              <div className="space-y-1">
-                <Label>
-                  {editId ? 'Nova senha (opcional)' : 'Senha de acesso'}
-                </Label>
-                <div className="relative">
-                  <Input
-                    type={showPass ? 'text' : 'password'}
-                    placeholder={editId ? 'Deixe em branco para manter a atual' : 'Mínimo 6 caracteres'}
-                    className="pr-9"
-                    value={form.senha}
-                    onChange={(e) => setForm((p) => ({ ...p, senha: e.target.value }))}
-                  />
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                    onClick={() => setShowPass((p) => !p)}
-                  >
-                    {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
+              {!editId && (
+                <p className="text-xs text-muted-foreground bg-muted rounded px-3 py-2">
+                  O usuário receberá um e-mail de convite para criar sua própria senha.
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
