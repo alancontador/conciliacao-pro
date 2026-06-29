@@ -161,6 +161,16 @@ export function Login() {
                   {loading ? 'Criando...' : 'Criar administrador e entrar'}
                 </Button>
               </form>
+
+              <div className="mt-4 pt-4 border-t text-center">
+                <button
+                  type="button"
+                  className="text-sm text-primary hover:underline"
+                  onClick={() => setTab('login')}
+                >
+                  Já possuo conta — ir para o login
+                </button>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -196,9 +206,9 @@ export function Login() {
                 </Button>
               </form>
 
-              {/* Link para definir senha inicial (usuários sem senha) */}
-              {semSenha.length > 0 && (
-                <div className="mt-4 pt-4 border-t text-center">
+              {/* Links auxiliares */}
+              <div className="mt-4 pt-4 border-t flex flex-col gap-1 text-center">
+                {semSenha.length > 0 && (
                   <button
                     type="button"
                     className="text-sm text-primary hover:underline"
@@ -206,8 +216,17 @@ export function Login() {
                   >
                     Primeiro acesso? Defina sua senha aqui
                   </button>
-                </div>
-              )}
+                )}
+                {isFirstAccess && (
+                  <button
+                    type="button"
+                    className="text-sm text-muted-foreground hover:underline"
+                    onClick={() => setTab('setup-admin')}
+                  >
+                    Criar conta de administrador
+                  </button>
+                )}
+              </div>
             </CardContent>
           </Card>
         )}
