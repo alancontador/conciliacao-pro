@@ -14,11 +14,18 @@ export interface Usuario {
   id: string;
   nome: string;
   email: string;
+  senhaHash?: string;
   role: UsuarioRole;
   status: UsuarioStatus;
   permissoes: PermissoesUsuario;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ResetToken {
+  token: string;
+  email: string;
+  expiresAt: number; // timestamp ms
 }
 
 export const ROLE_LABELS: Record<UsuarioRole, string> = {

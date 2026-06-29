@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { useAccountingStore } from '@/store/accounting';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
@@ -12,14 +11,10 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
-import { UserPlus, Pencil, Trash2, Search, ShieldCheck, ShieldX } from 'lucide-react';
+import { UserPlus, Pencil, Trash2, Search, ShieldCheck, ShieldX, KeyRound, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type { Usuario, UsuarioRole } from '@/types/usuario';
-import {
-  ROLE_LABELS,
-  PERMISSAO_LABELS,
-  DEFAULT_PERMISSOES,
-} from '@/types/usuario';
+import { ROLE_LABELS, PERMISSAO_LABELS, DEFAULT_PERMISSOES } from '@/types/usuario';
 
 const ROLE_COLORS: Record<UsuarioRole, string> = {
   admin: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
@@ -40,20 +35,26 @@ function initials(nome: string) {
 const EMPTY_FORM = {
   nome: '',
   email: '',
+  senha: '',
   role: 'analista' as UsuarioRole,
   status: 'ativo' as Usuario['status'],
   permissoes: { ...DEFAULT_PERMISSOES.analista },
 };
 
 export function Usuarios() {
-  const { usuarios, addUsuario, updateUsuario, deleteUsuario } = useAccountingStore();
+  const { usuarios, currentUser, addUsuario, updateUsuario, deleteUsuario, setUserPassword, requestPasswordReset } =
+    useAccountingStore();
   const { toast } = useToast();
+
+  const canManage = currentUser?.role === 'admin' || currentUser?.role === 'gerente';
 
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState({ ...EMPTY_FORM, permissoes: { ...EMPTY_FORM.permissoes } });
+  const [showPass, setShowPass] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const filtered = usuarios.filter(
     (u) =>
@@ -65,6 +66,7 @@ export function Usuarios() {
   const openCreate = () => {
     setEditId(null);
     setForm({ ...EMPTY_FORM, permissoes: { ...DEFAULT_PERMISSOES.analista } });
+    setShowPass(false);
     setDialogOpen(true);
   };
 
@@ -73,10 +75,12 @@ export function Usuarios() {
     setForm({
       nome: u.nome,
       email: u.email,
+      senha: '',
       role: u.role,
       status: u.status,
       permissoes: { ...u.permissoes },
     });
+    setShowPass(false);
     setDialogOpen(true);
   };
 
@@ -91,7 +95,7 @@ export function Usuarios() {
     }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.nome.trim() || !form.email.trim()) {
       toast({ title: 'Preencha nome e e-mail', variant: 'destructive' });
       return;
@@ -100,32 +104,52 @@ export function Usuarios() {
       toast({ title: 'E-mail inválido', variant: 'destructive' });
       return;
     }
-    const emailConflict = usuarios.find(
-      (u) => u.email === form.email && u.id !== editId,
-    );
+    const emailConflict = usuarios.find((u) => u.email === form.email && u.id !== editId);
     if (emailConflict) {
       toast({ title: 'E-mail já cadastrado', variant: 'destructive' });
       return;
     }
+    if (!editId && form.senha.length < 6) {
+      toast({ title: 'Senha deve ter pelo menos 6 caracteres', variant: 'destructive' });
+      return;
+    }
+    if (editId && form.senha && form.senha.length < 6) {
+      toast({ title: 'Senha deve ter pelo menos 6 caracteres', variant: 'destructive' });
+      return;
+    }
 
-    if (editId) {
-      updateUsuario(editId, {
-        nome: form.nome.trim(),
-        email: form.email.trim(),
-        role: form.role,
-        status: form.status,
-        permissoes: form.permissoes,
-      });
-      toast({ title: 'Usuário atualizado' });
-    } else {
-      addUsuario({
-        nome: form.nome.trim(),
-        email: form.email.trim(),
-        role: form.role,
-        status: form.status,
-        permissoes: form.permissoes,
-      });
-      toast({ title: 'Usuário criado com sucesso' });
+    setSaving(true);
+    try {
+      if (editId) {
+        updateUsuario(editId, {
+          nome: form.nome.trim(),
+          email: form.email.trim(),
+          role: form.role,
+          status: form.status,
+          permissoes: form.permissoes,
+        });
+        if (form.senha) {
+          await setUserPassword(editId, form.senha);
+        }
+        toast({ title: 'Usuário atualizado' });
+      } else {
+        // Cria usuário sem senha primeiro para pegar o ID
+        addUsuario({
+          nome: form.nome.trim(),
+          email: form.email.trim(),
+          role: form.role,
+          status: form.status,
+          permissoes: form.permissoes,
+        });
+        // Pega o ID do usuário recém-criado (último da lista)
+        const novoId = useAccountingStore.getState().usuarios.at(-1)?.id;
+        if (novoId && form.senha) {
+          await setUserPassword(novoId, form.senha);
+        }
+        toast({ title: 'Usuário criado com sucesso' });
+      }
+    } finally {
+      setSaving(false);
     }
     setDialogOpen(false);
   };
@@ -143,6 +167,21 @@ export function Usuarios() {
     toast({ title: `Usuário ${next === 'ativo' ? 'ativado' : 'desativado'}` });
   };
 
+  const handleRenovarSenha = (u: Usuario) => {
+    const token = requestPasswordReset(u.email);
+    if (!token) {
+      toast({ title: 'Erro ao gerar link', variant: 'destructive' });
+      return;
+    }
+    const resetUrl = `${window.location.origin}/reset-password?token=${token}`;
+    const subject = encodeURIComponent('Redefinição de senha — ConciliaçãoPRO');
+    const body = encodeURIComponent(
+      `Olá, ${u.nome}!\n\nClique no link abaixo para criar uma nova senha de acesso ao ConciliaçãoPRO:\n\n${resetUrl}\n\nEste link é válido por 24 horas.\n\nCaso não tenha solicitado, ignore este e-mail.`,
+    );
+    window.open(`mailto:${u.email}?subject=${subject}&body=${body}`);
+    toast({ title: 'E-mail de renovação preparado', description: `Link enviado para ${u.email}` });
+  };
+
   const ativos = usuarios.filter((u) => u.status === 'ativo').length;
 
   return (
@@ -155,10 +194,12 @@ export function Usuarios() {
             {usuarios.length} usuário(s) cadastrado(s) — {ativos} ativo(s)
           </p>
         </div>
-        <Button onClick={openCreate}>
-          <UserPlus className="w-4 h-4 mr-2" />
-          Novo Usuário
-        </Button>
+        {canManage && (
+          <Button onClick={openCreate}>
+            <UserPlus className="w-4 h-4 mr-2" />
+            Novo Usuário
+          </Button>
+        )}
       </div>
 
       {/* Cards resumo */}
@@ -207,7 +248,7 @@ export function Usuarios() {
                   <TableHead>Permissões</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Cadastrado em</TableHead>
-                  <TableHead className="w-24">Ações</TableHead>
+                  <TableHead className={canManage ? 'w-36' : 'w-0'}>Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -233,7 +274,7 @@ export function Usuarios() {
                       </span>
                     </TableCell>
 
-                    {/* Permissões (ícones) */}
+                    {/* Permissões */}
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
                         {(Object.entries(u.permissoes) as [keyof typeof u.permissoes, boolean][]).map(
@@ -251,12 +292,13 @@ export function Usuarios() {
                       </div>
                     </TableCell>
 
-                    {/* Status toggle */}
+                    {/* Status toggle — somente admin/gerente altera */}
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <Switch
                           checked={u.status === 'ativo'}
-                          onCheckedChange={() => handleToggleStatus(u)}
+                          onCheckedChange={() => canManage && handleToggleStatus(u)}
+                          disabled={!canManage}
                         />
                         <span className="text-xs text-muted-foreground">
                           {u.status === 'ativo' ? 'Ativo' : 'Inativo'}
@@ -266,33 +308,43 @@ export function Usuarios() {
 
                     {/* Data */}
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                      {(u.createdAt instanceof Date ? u.createdAt : new Date(u.createdAt))
-                        .toLocaleDateString('pt-BR')}
+                      {(u.createdAt instanceof Date ? u.createdAt : new Date(u.createdAt)).toLocaleDateString('pt-BR')}
                     </TableCell>
 
                     {/* Ações */}
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0"
-                          onClick={() => openEdit(u)}
-                          title="Editar usuário"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                          onClick={() => setDeleteId(u.id)}
-                          title="Excluir usuário"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+                    {canManage && (
+                      <TableCell>
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0"
+                            onClick={() => openEdit(u)}
+                            title="Editar usuário"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-amber-600 hover:text-amber-700"
+                            onClick={() => handleRenovarSenha(u)}
+                            title="Enviar e-mail para renovar senha"
+                          >
+                            <KeyRound className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                            onClick={() => setDeleteId(u.id)}
+                            title="Excluir usuário"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -303,17 +355,19 @@ export function Usuarios() {
 
       {/* Dialog criar / editar */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editId ? 'Editar Usuário' : 'Novo Usuário'}</DialogTitle>
             <DialogDescription>
-              {editId ? 'Atualize os dados e permissões do usuário.' : 'Preencha os dados para criar o usuário.'}
+              {editId
+                ? 'Atualize os dados e permissões. Deixe a senha em branco para manter a atual.'
+                : 'Preencha os dados para criar o usuário.'}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             {/* Dados básicos */}
-            <div className="grid grid-cols-1 gap-3">
+            <div className="space-y-3">
               <div className="space-y-1">
                 <Label>Nome completo</Label>
                 <Input
@@ -330,6 +384,28 @@ export function Usuarios() {
                   value={form.email}
                   onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
                 />
+              </div>
+              <div className="space-y-1">
+                <Label>
+                  {editId ? 'Nova senha (opcional)' : 'Senha de acesso'}
+                </Label>
+                <div className="relative">
+                  <Input
+                    type={showPass ? 'text' : 'password'}
+                    placeholder={editId ? 'Deixe em branco para manter a atual' : 'Mínimo 6 caracteres'}
+                    className="pr-9"
+                    value={form.senha}
+                    onChange={(e) => setForm((p) => ({ ...p, senha: e.target.value }))}
+                  />
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    onClick={() => setShowPass((p) => !p)}
+                  >
+                    {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -392,8 +468,12 @@ export function Usuarios() {
           </div>
 
           <DialogFooter className="mt-2">
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSave}>{editId ? 'Salvar alterações' : 'Criar usuário'}</Button>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? 'Salvando...' : editId ? 'Salvar alterações' : 'Criar usuário'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

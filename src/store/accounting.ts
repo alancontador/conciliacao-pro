@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { Conta, BalanceteRow, RazaoRow, ImportHistory, CompanyInfo, KPIData } from '@/types/accounting';
-import type { Usuario } from '@/types/usuario';
+import type { Usuario, ResetToken } from '@/types/usuario';
+import { hashPassword, verifyPassword, generateToken } from '@/lib/auth';
 
 interface AccountingState {
   // Company and session data
@@ -37,6 +38,16 @@ interface AccountingState {
   updateUsuario: (id: string, updates: Partial<Omit<Usuario, 'id' | 'createdAt'>>) => void;
   deleteUsuario: (id: string) => void;
 
+  // Autenticação
+  currentUser: Usuario | null;
+  resetTokens: ResetToken[];
+  login: (email: string, password: string) => Promise<'ok' | 'invalid' | 'inactive'>;
+  logout: () => void;
+  createFirstAdmin: (nome: string, email: string, password: string) => Promise<void>;
+  setUserPassword: (userId: string, password: string) => Promise<void>;
+  requestPasswordReset: (email: string) => string | null;
+  confirmPasswordReset: (token: string, newPassword: string) => Promise<boolean>;
+
   // Conciliação de lançamentos individuais do razão
   reconciledRazaoIndices: number[];
   reconcileRazaoTransactions: (indices: number[]) => void;
@@ -58,6 +69,8 @@ export const useAccountingStore = create<AccountingState>()(
       razaoData: [],
       importHistory: [],
       usuarios: [],
+      currentUser: null,
+      resetTokens: [],
       reconciledRazaoIndices: [],
 
       setCompanyInfo: (info) => set({ companyInfo: info }),
@@ -164,10 +177,91 @@ export const useAccountingStore = create<AccountingState>()(
           usuarios: state.usuarios.map((u) =>
             u.id === id ? { ...u, ...updates, updatedAt: new Date() } : u
           ),
+          // Atualiza currentUser se for o mesmo
+          currentUser:
+            state.currentUser?.id === id
+              ? { ...state.currentUser, ...updates, updatedAt: new Date() }
+              : state.currentUser,
         })),
 
       deleteUsuario: (id) =>
         set((state) => ({ usuarios: state.usuarios.filter((u) => u.id !== id) })),
+
+      login: async (email, password) => {
+        const { usuarios } = get();
+        const user = usuarios.find((u) => u.email.toLowerCase() === email.toLowerCase());
+        if (!user || !user.senhaHash) return 'invalid';
+        if (user.status === 'inativo') return 'inactive';
+        const ok = await verifyPassword(password, user.senhaHash);
+        if (!ok) return 'invalid';
+        set({ currentUser: user });
+        return 'ok';
+      },
+
+      logout: () => set({ currentUser: null }),
+
+      createFirstAdmin: async (nome, email, password) => {
+        const senhaHash = await hashPassword(password);
+        const admin: Usuario = {
+          id: crypto.randomUUID(),
+          nome,
+          email,
+          senhaHash,
+          role: 'admin',
+          status: 'ativo',
+          permissoes: {
+            verDashboard: true,
+            verStatus: true,
+            editarStatus: true,
+            importar: true,
+            exportar: true,
+            gerenciarUsuarios: true,
+          },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        set((state) => ({ usuarios: [...state.usuarios, admin], currentUser: admin }));
+      },
+
+      setUserPassword: async (userId, password) => {
+        const senhaHash = await hashPassword(password);
+        set((state) => ({
+          usuarios: state.usuarios.map((u) =>
+            u.id === userId ? { ...u, senhaHash, updatedAt: new Date() } : u
+          ),
+        }));
+      },
+
+      requestPasswordReset: (email) => {
+        const { usuarios } = get();
+        const user = usuarios.find((u) => u.email.toLowerCase() === email.toLowerCase());
+        if (!user) return null;
+        const token = generateToken();
+        const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24h
+        set((state) => ({
+          resetTokens: [
+            ...state.resetTokens.filter((t) => t.email !== email),
+            { token, email, expiresAt },
+          ],
+        }));
+        return token;
+      },
+
+      confirmPasswordReset: async (token, newPassword) => {
+        const { resetTokens, usuarios } = get();
+        const entry = resetTokens.find((t) => t.token === token);
+        if (!entry || entry.expiresAt < Date.now()) return false;
+        const user = usuarios.find((u) => u.email === entry.email);
+        if (!user) return false;
+        const senhaHash = await hashPassword(newPassword);
+        set((state) => ({
+          usuarios: state.usuarios.map((u) =>
+            u.id === user.id ? { ...u, senhaHash, updatedAt: new Date() } : u
+          ),
+          resetTokens: state.resetTokens.filter((t) => t.token !== token),
+        }));
+        return true;
+      },
 
       updateRazaoTransaction: (index, updates) =>
         set((state) => {
