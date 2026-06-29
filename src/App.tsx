@@ -9,6 +9,7 @@ import { Status } from "@/pages/Status";
 import { ImportBalancete } from "@/pages/ImportBalancete";
 import { ImportRazao } from "@/pages/ImportRazao";
 import { Settings } from "@/pages/Settings";
+import { Usuarios } from "@/pages/Usuarios";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -26,6 +27,7 @@ const App = () => (
             <Route path="/import/balancete" element={<ImportBalancete />} />
             <Route path="/import/razao" element={<ImportRazao />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/usuarios" element={<Usuarios />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

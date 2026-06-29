@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { Conta, BalanceteRow, RazaoRow, ImportHistory, CompanyInfo, KPIData } from '@/types/accounting';
+import type { Usuario } from '@/types/usuario';
 
 interface AccountingState {
   // Company and session data
@@ -30,6 +31,12 @@ interface AccountingState {
   updateRazaoTransaction: (index: number, updates: Partial<RazaoRow>) => void;
   deleteRazaoTransaction: (index: number) => void;
 
+  // Usuários
+  usuarios: Usuario[];
+  addUsuario: (u: Omit<Usuario, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  updateUsuario: (id: string, updates: Partial<Omit<Usuario, 'id' | 'createdAt'>>) => void;
+  deleteUsuario: (id: string) => void;
+
   // Conciliação de lançamentos individuais do razão
   reconciledRazaoIndices: number[];
   reconcileRazaoTransactions: (indices: number[]) => void;
@@ -50,6 +57,7 @@ export const useAccountingStore = create<AccountingState>()(
       balanceteData: [],
       razaoData: [],
       importHistory: [],
+      usuarios: [],
       reconciledRazaoIndices: [],
 
       setCompanyInfo: (info) => set({ companyInfo: info }),
@@ -142,6 +150,24 @@ export const useAccountingStore = create<AccountingState>()(
               : conta
           ),
         })),
+
+      addUsuario: (u) =>
+        set((state) => ({
+          usuarios: [
+            ...state.usuarios,
+            { ...u, id: crypto.randomUUID(), createdAt: new Date(), updatedAt: new Date() },
+          ],
+        })),
+
+      updateUsuario: (id, updates) =>
+        set((state) => ({
+          usuarios: state.usuarios.map((u) =>
+            u.id === id ? { ...u, ...updates, updatedAt: new Date() } : u
+          ),
+        })),
+
+      deleteUsuario: (id) =>
+        set((state) => ({ usuarios: state.usuarios.filter((u) => u.id !== id) })),
 
       updateRazaoTransaction: (index, updates) =>
         set((state) => {

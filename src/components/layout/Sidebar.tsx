@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  Upload, 
-  FileSpreadsheet, 
-  BarChart3, 
+import {
+  LayoutDashboard,
+  Upload,
+  FileSpreadsheet,
+  BarChart3,
   Settings,
+  Users,
   ChevronLeft,
   ChevronRight,
   Building2
@@ -18,6 +19,7 @@ const navigation = [
   { name: 'Status das Contas', href: '/status', icon: BarChart3 },
   { name: 'Importar Balancete', href: '/import/balancete', icon: Upload },
   { name: 'Importar Razão', href: '/import/razao', icon: FileSpreadsheet },
+  { name: 'Usuários', href: '/usuarios', icon: Users },
   { name: 'Configurações', href: '/settings', icon: Settings },
 ];
 
