@@ -37,39 +37,34 @@ export async function createTenantAndAdmin(params: {
   email: string;
   password: string;
 }) {
-  // 1. Cria conta no Supabase Auth
+  // 1. Cria conta no Supabase Auth (retorna sessão imediatamente se confirmação desabilitada)
   const { data: authData, error: authError } = await supabase.auth.signUp({
     email: params.email,
     password: params.password,
   });
-  if (authError || !authData.user) throw authError ?? new Error('Erro ao criar conta');
+  if (authError) throw new Error(authError.message);
+  if (!authData.user) throw new Error('Erro ao criar conta — tente novamente');
+  if (!authData.session) throw new Error(
+    'Confirme seu e-mail antes de continuar. Verifique a caixa de entrada.'
+  );
 
-  // 2. Cria o tenant
-  const { data: tenant, error: tenantError } = await supabase
-    .from('tenants')
-    .insert({ nome: params.tenantNome, cnpj: params.tenantCnpj ?? null, email: params.email })
-    .select()
-    .single();
-  if (tenantError || !tenant) throw tenantError ?? new Error('Erro ao criar escritório');
-
-  // 3. Cria o profile do admin
+  // 2. Cria tenant + profile via RPC com SECURITY DEFINER (bypass RLS)
   const adminPermissoes: PermissoesUsuario = {
     verDashboard: true, verStatus: true, editarStatus: true,
     importar: true, exportar: true, gerenciarUsuarios: true, gerenciarEmpresas: true,
   };
-  const { error: profileError } = await supabase
-    .from('profiles')
-    .insert({
-      id: authData.user.id,
-      tenant_id: tenant.id,
-      nome: params.adminNome,
-      role: 'admin',
-      status: 'ativo',
-      permissoes: adminPermissoes,
-    });
-  if (profileError) throw profileError;
+  const { data: rpcData, error: rpcError } = await supabase.rpc(
+    'signup_create_tenant_and_profile',
+    {
+      p_tenant_nome: params.tenantNome,
+      p_tenant_cnpj: params.tenantCnpj ?? '',
+      p_admin_nome: params.adminNome,
+      p_permissoes: adminPermissoes,
+    },
+  );
+  if (rpcError) throw new Error('Erro ao configurar escritório: ' + rpcError.message);
 
-  return { user: authData.user, tenant };
+  return { user: authData.user, tenantId: (rpcData as { tenant_id: string }).tenant_id };
 }
 
 // ── Profile (usuário logado) ──────────────────────────────────────────────────
