@@ -217,7 +217,7 @@ export const useAccountingStore = create<AccountingState>()(
       logout: async () => {
         await svc.signOut();
         set({
-          currentUser: null, tenantId: null, isInitialized: false,
+          currentUser: null, tenantId: null, isInitialized: true,
           empresas: [], selectedEmpresaId: null, dadosPorEmpresa: {},
           usuarios: [], contas: [], balanceteData: [], razaoData: [],
           importHistory: [], reconciledRazaoIndices: [],

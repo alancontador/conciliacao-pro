@@ -72,7 +72,18 @@ export async function createTenantAndAdmin(params: {
     userId = signInData.user!.id;
   }
 
-  // 2. Cria tenant + profile via RPC com SECURITY DEFINER (bypass RLS)
+  // 2. Verifica se já existe profile para este usuário (e-mail já cadastrado)
+  const { data: existingProfile } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('id', userId)
+    .maybeSingle();
+  if (existingProfile) {
+    await supabase.auth.signOut();
+    throw new Error('Este e-mail já possui uma conta cadastrada. Faça login.');
+  }
+
+  // 3. Cria tenant + profile via RPC com SECURITY DEFINER (bypass RLS)
   const adminPermissoes: PermissoesUsuario = {
     verDashboard: true, verStatus: true, editarStatus: true,
     importar: true, exportar: true, gerenciarUsuarios: true, gerenciarEmpresas: true,
