@@ -37,16 +37,40 @@ export async function createTenantAndAdmin(params: {
   email: string;
   password: string;
 }) {
-  // 1. Cria conta no Supabase Auth (retorna sessão imediatamente se confirmação desabilitada)
-  const { data: authData, error: authError } = await supabase.auth.signUp({
+  // 1. Tenta criar conta; se já existe, faz login direto
+  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
     email: params.email,
     password: params.password,
   });
-  if (authError) throw new Error(authError.message);
-  if (!authData.user) throw new Error('Erro ao criar conta — tente novamente');
-  if (!authData.session) throw new Error(
-    'Confirme seu e-mail antes de continuar. Verifique a caixa de entrada.'
-  );
+
+  let session = signUpData?.session;
+  let userId = signUpData?.user?.id;
+
+  // Supabase pode retornar erro "already registered" — tenta login nesse caso
+  if (signUpError || !userId) {
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+      email: params.email,
+      password: params.password,
+    });
+    if (signInError || !signInData.user) {
+      throw new Error(signUpError?.message ?? 'Erro ao criar conta');
+    }
+    session = signInData.session;
+    userId = signInData.user.id;
+  }
+
+  // Se signUp funcionou mas sem sessão, faz login para obter sessão
+  if (!session) {
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+      email: params.email,
+      password: params.password,
+    });
+    if (signInError || !signInData.session) {
+      throw new Error('Confirme seu e-mail antes de continuar.');
+    }
+    session = signInData.session;
+    userId = signInData.user!.id;
+  }
 
   // 2. Cria tenant + profile via RPC com SECURITY DEFINER (bypass RLS)
   const adminPermissoes: PermissoesUsuario = {
@@ -64,7 +88,7 @@ export async function createTenantAndAdmin(params: {
   );
   if (rpcError) throw new Error('Erro ao configurar escritório: ' + rpcError.message);
 
-  return { user: authData.user, tenantId: (rpcData as { tenant_id: string }).tenant_id };
+  return { userId, tenantId: (rpcData as { tenant_id: string }).tenant_id };
 }
 
 // ── Profile (usuário logado) ──────────────────────────────────────────────────
