@@ -1,16 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 
-const url  = import.meta.env.VITE_SUPABASE_URL  as string;
-const key  = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
-
-if (!url || !key) {
-  throw new Error(
-    'Variáveis VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY não configuradas. ' +
-    'Copie .env.example para .env e preencha com os dados do seu projeto Supabase.'
-  );
+// Lê variáveis injetadas em runtime (Docker) ou em build time (Vite dev)
+declare global {
+  interface Window {
+    __env?: { VITE_SUPABASE_URL?: string; VITE_SUPABASE_ANON_KEY?: string };
+  }
 }
 
-export const supabase = createClient(url, key);
+const url = window.__env?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL || '';
+const key = window.__env?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
+export const supabase = createClient(url || 'https://placeholder.supabase.co', key || 'placeholder');
 
 // ── Tipos das tabelas ──────────────────────────────────────────────────────────
 
