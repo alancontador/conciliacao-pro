@@ -125,11 +125,17 @@ export function Status() {
   const handleApplySuggestions = useCallback(async () => {
     const approved = candidates.filter((c) => approvedIds.has(c.id));
     for (const candidate of approved) {
-      const indices = [...candidate.groupA, ...candidate.groupB].map((r) => r.globalIdx);
+      const rows = [...candidate.groupA, ...candidate.groupB];
+      const indices = rows.map((r) => r.globalIdx);
       reconcileRazaoTransactions(indices);
       await logConciliacaoAuditoria({
         contaNumero: selectedConta?.numero ?? '',
-        razaoIndices: indices,
+        lancamentos: rows.map((r) => ({
+          data: (r.data instanceof Date ? r.data : new Date(r.data)).toISOString(),
+          lote: r.lote,
+          historico: r.historico,
+          valor: r.debito || r.credito,
+        })),
         score: candidate.score,
         criterios: candidate.reasons,
       });

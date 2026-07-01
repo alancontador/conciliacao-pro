@@ -3,6 +3,7 @@ import type { DbProfile, DbEmpresa, DbConta, DbDadosEmpresa, DbConvite } from '@
 import type { Empresa } from '@/types/empresa';
 import type { Usuario, PermissoesUsuario } from '@/types/usuario';
 import type { Conta, BalanceteRow, RazaoRow, ImportHistory } from '@/types/accounting';
+import type { MatchReasons } from '@/lib/reconciliation/types';
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -347,16 +348,16 @@ export async function insertConciliacaoAuditoria(params: {
   tenantId: string;
   empresaId: string;
   contaNumero: string;
-  razaoIndices: number[];
+  lancamentos: { data: string; lote: string; historico: string; valor: number }[];
   score: number;
-  criterios: Record<string, unknown>;
+  criterios: MatchReasons;
   usuarioId: string;
 }) {
   const { error } = await supabase.from('conciliacoes_auditoria').insert({
     tenant_id: params.tenantId,
     empresa_id: params.empresaId,
     conta_numero: params.contaNumero,
-    razao_indices: params.razaoIndices,
+    lancamentos: params.lancamentos,
     score: params.score,
     criterios: params.criterios,
     usuario_id: params.usuarioId,

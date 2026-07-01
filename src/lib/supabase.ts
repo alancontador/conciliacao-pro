@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import type { MatchReasons } from '@/lib/reconciliation/types';
 
 // Lê variáveis injetadas em runtime (Docker) ou em build time (Vite dev)
 declare global {
@@ -88,14 +89,21 @@ export interface DbConvite {
   criado_em: string;
 }
 
+export interface AuditoriaLancamentoSnapshot {
+  data: string;
+  lote: string;
+  historico: string;
+  valor: number;
+}
+
 export interface DbConciliacaoAuditoria {
   id: string;
   tenant_id: string;
   empresa_id: string;
   conta_numero: string;
-  razao_indices: number[];
+  lancamentos: AuditoriaLancamentoSnapshot[];
   score: number;
-  criterios: Record<string, unknown>;
+  criterios: MatchReasons;
   usuario_id: string | null;
   criado_em: string;
 }

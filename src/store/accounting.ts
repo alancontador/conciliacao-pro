@@ -5,6 +5,7 @@ import type { Usuario, PermissoesUsuario } from '@/types/usuario';
 import type { Empresa } from '@/types/empresa';
 import * as svc from '@/services/supabase.service';
 import { supabase } from '@/lib/supabase';
+import type { MatchReasons } from '@/lib/reconciliation/types';
 
 // ── Dados por empresa (cache local) ──────────────────────────────────────────
 
@@ -87,9 +88,9 @@ interface AccountingState {
   unreconcileRazaoTransactions: (indices: number[]) => void;
   logConciliacaoAuditoria: (params: {
     contaNumero: string;
-    razaoIndices: number[];
+    lancamentos: { data: string; lote: string; historico: string; valor: number }[];
     score: number;
-    criterios: Record<string, unknown>;
+    criterios: MatchReasons;
   }) => Promise<void>;
   calculateKPIs: () => KPIData;
 
@@ -332,12 +333,12 @@ export const useAccountingStore = create<AccountingState>()(
           return sync(state, { reconciledRazaoIndices });
         }),
 
-      logConciliacaoAuditoria: async ({ contaNumero, razaoIndices, score, criterios }) => {
+      logConciliacaoAuditoria: async ({ contaNumero, lancamentos, score, criterios }) => {
         const { tenantId, selectedEmpresaId, currentUser } = get();
         if (!tenantId || !selectedEmpresaId || !currentUser) return;
         try {
           await svc.insertConciliacaoAuditoria({
-            tenantId, empresaId: selectedEmpresaId, contaNumero, razaoIndices, score, criterios,
+            tenantId, empresaId: selectedEmpresaId, contaNumero, lancamentos, score, criterios,
             usuarioId: currentUser.id,
           });
         } catch (error) {

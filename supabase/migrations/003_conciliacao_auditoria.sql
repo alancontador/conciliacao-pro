@@ -8,7 +8,7 @@ create table if not exists public.conciliacoes_auditoria (
   tenant_id     uuid        not null references public.tenants(id) on delete cascade,
   empresa_id    uuid        not null references public.empresas(id) on delete cascade,
   conta_numero  text        not null,
-  razao_indices jsonb       not null,
+  lancamentos   jsonb       not null,
   score         integer     not null,
   criterios     jsonb       not null,
   usuario_id    uuid        references public.profiles(id) on delete set null,
