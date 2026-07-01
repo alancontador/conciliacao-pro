@@ -34,7 +34,7 @@ import { generateCandidates } from '@/lib/reconciliation/engine';
 import type { ReconciliationCandidate } from '@/lib/reconciliation/types';
 
 export function Status() {
-  const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, updateConta, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions } = useAccountingStore();
+  const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, updateConta, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions, logConciliacaoAuditoria } = useAccountingStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [naturezaFilter, setNaturezaFilter] = useState<string>('all');
@@ -121,6 +121,24 @@ export function Status() {
     setApprovedIds(new Set(results.filter((c) => c.confidence === 'ALTA').map((c) => c.id)));
     setShowSuggestions(true);
   }, [allMovsWithIdx, reconciledSet]);
+
+  const handleApplySuggestions = useCallback(async () => {
+    const approved = candidates.filter((c) => approvedIds.has(c.id));
+    for (const candidate of approved) {
+      const indices = [...candidate.groupA, ...candidate.groupB].map((r) => r.globalIdx);
+      reconcileRazaoTransactions(indices);
+      await logConciliacaoAuditoria({
+        contaNumero: selectedConta?.numero ?? '',
+        razaoIndices: indices,
+        score: candidate.score,
+        criterios: candidate.reasons,
+      });
+    }
+    toast({ title: 'Conciliação aplicada', description: `${approved.length} grupo(s) conciliado(s).` });
+    setShowSuggestions(false);
+    setCandidates([]);
+    setApprovedIds(new Set());
+  }, [candidates, approvedIds, reconcileRazaoTransactions, logConciliacaoAuditoria, selectedConta, toast]);
 
   const handleDialogClose = (open: boolean) => {
     if (!open) {
@@ -726,6 +744,61 @@ export function Status() {
               </div>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de sugestões de conciliação inteligente */}
+      <Dialog open={showSuggestions} onOpenChange={setShowSuggestions}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Sugestões de conciliação</DialogTitle>
+            <DialogDescription>
+              Revise os candidatos abaixo antes de aplicar. Nada é conciliado automaticamente sem sua aprovação.
+            </DialogDescription>
+          </DialogHeader>
+
+          {candidates.length === 0 ? (
+            <p className="text-muted-foreground text-center py-8">Nenhum candidato de alta ou média confiança encontrado.</p>
+          ) : (
+            <div className="space-y-3">
+              {candidates.map((c) => (
+                <div key={c.id} className="border rounded-lg p-3 flex gap-3">
+                  <Checkbox
+                    checked={approvedIds.has(c.id)}
+                    onCheckedChange={(checked) => {
+                      setApprovedIds((prev) => {
+                        const next = new Set(prev);
+                        if (checked) next.add(c.id); else next.delete(c.id);
+                        return next;
+                      });
+                    }}
+                  />
+                  <div className="flex-1 space-y-1">
+                    <Badge variant={c.confidence === 'ALTA' ? 'default' : 'secondary'}>
+                      {c.confidence} · {c.score}
+                    </Badge>
+                    {[...c.groupA, ...c.groupB].map((r) => (
+                      <div key={r.globalIdx} className="text-xs font-mono flex gap-2">
+                        <span>{(r.data instanceof Date ? r.data : new Date(r.data)).toLocaleDateString('pt-BR')}</span>
+                        <span className="flex-1 truncate">{r.historico}</span>
+                        <span>R$ {(r.debito || r.credito).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    ))}
+                    <p className="text-xs text-muted-foreground">
+                      {c.reasons.valorDetalhe} · {c.reasons.textoDetalhe} · {c.reasons.dataDetalhe}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" onClick={() => setShowSuggestions(false)}>Cancelar</Button>
+            <Button disabled={approvedIds.size === 0} onClick={handleApplySuggestions}>
+              Aplicar {approvedIds.size} selecionado(s)
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
