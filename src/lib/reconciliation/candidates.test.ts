@@ -100,4 +100,24 @@ describe('generateSubsetSumCandidates', () => {
     expect(candidates[0].groupA.map((r) => r.globalIdx)).toEqual([0]);
     expect(candidates[0].groupB.map((r) => r.globalIdx).sort()).toEqual([1, 2, 3]);
   });
+
+  it('nao trava com muitos lancamentos sem combinacao valida (regressao de performance)', () => {
+    // 200 debitos identicos e nenhum credito com soma alcancavel: antes da correcao,
+    // a busca combinatoria (C(n, maxCombinationSize)) explodia e travava a aba com
+    // contas de muitos lancamentos. O limite de pool (maxSubsetSumPoolSize) deve
+    // manter isso rapido independente do total de lancamentos na conta.
+    const debitos = Array.from({ length: 200 }, (_, i) =>
+      row({ globalIdx: i, debito: 100, data: new Date(2026, 2, 1 + (i % 30)) }),
+    );
+    const creditos = Array.from({ length: 50 }, (_, i) =>
+      row({ globalIdx: 200 + i, credito: 133.33, data: new Date(2026, 2, 15) }),
+    );
+
+    const start = Date.now();
+    const candidates = generateSubsetSumCandidates([...debitos, ...creditos], new Set(), RECONCILIATION_CONFIG);
+    const elapsedMs = Date.now() - start;
+
+    expect(candidates).toHaveLength(0);
+    expect(elapsedMs).toBeLessThan(3000);
+  });
 });

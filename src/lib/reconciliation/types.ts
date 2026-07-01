@@ -8,6 +8,7 @@ export interface ReconciliationConfig {
   valueTolerance: number;
   timeWindowDays: number;
   maxCombinationSize: number;
+  maxSubsetSumPoolSize: number;
   weights: { valor: number; texto: number; data: number };
   thresholds: { alta: number; media: number };
 }
@@ -16,6 +17,7 @@ export const RECONCILIATION_CONFIG: ReconciliationConfig = {
   valueTolerance: 0.01,
   timeWindowDays: 60,
   maxCombinationSize: 4,
+  maxSubsetSumPoolSize: 25,
   weights: { valor: 50, texto: 35, data: 15 },
   thresholds: { alta: 85, media: 60 },
 };

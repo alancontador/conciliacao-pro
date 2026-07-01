@@ -33,6 +33,10 @@ function valueOf(r: RazaoRowWithIndex): number {
   return r.debito > 0 ? r.debito : r.credito;
 }
 
+// Limite de nós explorados por busca: contas com muitos lançamentos não podem travar a aba
+// mesmo que, por algum motivo, um pool maior que maxSubsetSumPoolSize chegue até aqui.
+const SEARCH_VISIT_BUDGET = 50_000;
+
 function findSubsetSum(
   pool: RazaoRowWithIndex[],
   target: number,
@@ -40,11 +44,13 @@ function findSubsetSum(
   maxSize: number,
 ): RazaoRowWithIndex[] | null {
   const sorted = [...pool].sort((a, b) => valueOf(b) - valueOf(a));
+  let visited = 0;
 
   function search(startIdx: number, remaining: number, picked: RazaoRowWithIndex[]): RazaoRowWithIndex[] | null {
     if (Math.abs(remaining) <= tolerance && picked.length >= 2) return picked;
     if (picked.length >= maxSize) return null;
     for (let i = startIdx; i < sorted.length; i++) {
+      if (++visited > SEARCH_VISIT_BUDGET) return null;
       const value = valueOf(sorted[i]);
       if (value - remaining > tolerance) continue; // maior que o restante: pula (lista ordenada desc)
       const result = search(i + 1, remaining - value, [...picked, sorted[i]]);
@@ -54,6 +60,20 @@ function findSubsetSum(
   }
 
   return search(0, target, []);
+}
+
+// Reduz o pool de candidatos ao subconjunto mais relevante (mais próximo em data do alvo)
+// antes de rodar a busca combinatória — sem isso, C(n, maxCombinationSize) explode com
+// contas de muitos lançamentos e trava a aba.
+function limitPool(
+  pool: RazaoRowWithIndex[],
+  target: RazaoRowWithIndex,
+  maxSize: number,
+): RazaoRowWithIndex[] {
+  if (pool.length <= maxSize) return pool;
+  return [...pool]
+    .sort((a, b) => Math.abs(toTime(a.data) - toTime(target.data)) - Math.abs(toTime(b.data) - toTime(target.data)))
+    .slice(0, maxSize);
 }
 
 export function generateSubsetSumCandidates(
@@ -71,7 +91,11 @@ export function generateSubsetSumCandidates(
 
   for (const target of creditos) {
     if (usedIdx.has(target.globalIdx)) continue;
-    const pool = debitos.filter((d) => !usedIdx.has(d.globalIdx) && withinWindow(d, target));
+    const pool = limitPool(
+      debitos.filter((d) => !usedIdx.has(d.globalIdx) && withinWindow(d, target)),
+      target,
+      config.maxSubsetSumPoolSize,
+    );
     const combo = findSubsetSum(pool, target.credito, config.valueTolerance, config.maxCombinationSize);
     if (combo) {
       combo.forEach((r) => usedIdx.add(r.globalIdx));
@@ -82,7 +106,11 @@ export function generateSubsetSumCandidates(
 
   for (const target of debitos) {
     if (usedIdx.has(target.globalIdx)) continue;
-    const pool = creditos.filter((c) => !usedIdx.has(c.globalIdx) && withinWindow(c, target));
+    const pool = limitPool(
+      creditos.filter((c) => !usedIdx.has(c.globalIdx) && withinWindow(c, target)),
+      target,
+      config.maxSubsetSumPoolSize,
+    );
     const combo = findSubsetSum(pool, target.debito, config.valueTolerance, config.maxCombinationSize);
     if (combo) {
       combo.forEach((r) => usedIdx.add(r.globalIdx));
