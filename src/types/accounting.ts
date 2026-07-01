@@ -32,6 +32,7 @@ export interface Movimentacao {
   debito: number;
   credito: number;
   saldoExercicio: number;
+  globalIdx?: number;
 }
 
 export interface BalanceteRow {

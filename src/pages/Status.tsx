@@ -62,6 +62,23 @@ export function Status() {
 
   const reconciledSet = useMemo(() => new Set(reconciledRazaoIndices), [reconciledRazaoIndices]);
 
+  // Saldo corrido considerando apenas lançamentos ainda não conciliados (mesma regra da
+  // Composição): lançamentos conciliados não alteram o saldo, apenas herdam o valor corrente.
+  const recalculatedSaldoByIdx = useMemo(() => {
+    const map = new Map<number, number>();
+    if (!selectedConta) return map;
+    let saldoPendente = 0;
+    for (const mov of allMovsWithIdx) {
+      if (!reconciledSet.has(mov.globalIdx)) {
+        saldoPendente += selectedConta.natureza === 'ATIVO'
+          ? mov.debito - mov.credito
+          : mov.credito - mov.debito;
+      }
+      map.set(mov.globalIdx, saldoPendente);
+    }
+    return map;
+  }, [allMovsWithIdx, reconciledSet, selectedConta]);
+
   // Filtra pendentes ou conciliados conforme a aba ativa
   const visibleMovs = useMemo(() =>
     showReconciled
@@ -121,6 +138,12 @@ export function Status() {
     setApprovedIds(new Set(results.filter((c) => c.confidence === 'ALTA').map((c) => c.id)));
     setShowSuggestions(true);
   }, [allMovsWithIdx, reconciledSet]);
+
+  const allSuggestionsSelected = candidates.length > 0 && candidates.every((c) => approvedIds.has(c.id));
+
+  const handleToggleSelectAllSuggestions = () => {
+    setApprovedIds(allSuggestionsSelected ? new Set() : new Set(candidates.map((c) => c.id)));
+  };
 
   const handleApplySuggestions = useCallback(async () => {
     const approved = candidates.filter((c) => approvedIds.has(c.id));
@@ -235,6 +258,8 @@ export function Status() {
   }, [deleteRazaoTransaction, toast]);
 
   // Sempre recalcula composição e movimentações a partir dos dados atuais do razão.
+  // Composição = saldo corrido considerando apenas lançamentos ainda NÃO conciliados
+  // (lançamentos conciliados não alteram o saldo corrido, como se tivessem "saído" da conta).
   // Status e documentos são preservados da store (caso o usuário já tenha reconciliado).
   const processedContas = useMemo(() => {
     if (balanceteData.length === 0) return contas;
@@ -242,24 +267,29 @@ export function Status() {
     return balanceteData.map(balancete => {
       const stored = contas.find(c => c.numero === balancete.codigo);
 
+      let saldoPendente = 0;
       const movimentacoes = razaoData
-        .filter(razao => razao.conta.trim() === balancete.codigo.trim())
-        .map((razao, index) => ({
-          id: `${balancete.codigo}-${index}`,
-          data: razao.data,
-          lote: razao.lote,
-          historico: razao.historico,
-          debito: razao.debito,
-          credito: razao.credito,
-          saldoExercicio: razao.saldoExercicio,
-        }));
+        .map((razao, globalIdx) => ({ razao, globalIdx }))
+        .filter(({ razao }) => razao.conta.trim() === balancete.codigo.trim())
+        .map(({ razao, globalIdx }, index) => {
+          if (!reconciledSet.has(globalIdx)) {
+            saldoPendente += balancete.natureza === 'ATIVO'
+              ? razao.debito - razao.credito
+              : razao.credito - razao.debito;
+          }
+          return {
+            id: `${balancete.codigo}-${index}`,
+            data: razao.data,
+            lote: razao.lote,
+            historico: razao.historico,
+            debito: razao.debito,
+            credito: razao.credito,
+            saldoExercicio: saldoPendente,
+            globalIdx,
+          };
+        });
 
-      const composicao = movimentacoes.reduce((acc, mov) =>
-        balancete.natureza === 'ATIVO'
-          ? acc + mov.debito - mov.credito
-          : acc + mov.credito - mov.debito,
-        0,
-      );
+      const composicao = saldoPendente;
 
       const diferenca = Math.abs(balancete.saldoAtual) - Math.abs(composicao);
       const computedStatus: Conta['status'] = Math.abs(diferenca) < 0.01
@@ -282,7 +312,15 @@ export function Status() {
         updatedAt: stored?.updatedAt ?? new Date(),
       } as Conta;
     });
-  }, [contas, balanceteData, razaoData]);
+  }, [contas, balanceteData, razaoData, reconciledSet]);
+
+  // Valores ao vivo da conta aberta no pop-up: selectedConta é uma "foto" capturada ao
+  // clicar no olho e não se atualiza sozinha; buscamos os valores atuais em processedContas
+  // para que Composição/Diferença reflitam conciliações feitas com o pop-up já aberto.
+  const liveConta = useMemo(
+    () => (selectedConta ? processedContas.find(c => c.numero === selectedConta.numero) ?? selectedConta : null),
+    [selectedConta, processedContas],
+  );
 
   const handleAttachClick = useCallback((numero: string) => {
     attachTargetRef.current = numero;
@@ -483,7 +521,7 @@ export function Status() {
       {/* Dialog de lançamentos da conta */}
       <Dialog open={!!selectedConta} onOpenChange={handleDialogClose}>
         <DialogContent className="max-w-[95vw] w-[95vw] max-h-[90vh] flex flex-col p-0">
-          {selectedConta && (
+          {selectedConta && liveConta && (
             <>
               {/* Cabeçalho fixo */}
               <DialogHeader className="px-8 pt-8 pb-4 border-b shrink-0">
@@ -494,20 +532,20 @@ export function Status() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
                     <div className="bg-muted rounded-lg p-3">
                       <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Natureza</p>
-                      <p className="font-semibold">{selectedConta.natureza}</p>
+                      <p className="font-semibold">{liveConta.natureza}</p>
                     </div>
                     <div className="bg-muted rounded-lg p-3">
                       <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Contabilidade</p>
-                      <p className="font-mono font-semibold">R$ {selectedConta.contabilidade.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                      <p className="font-mono font-semibold">R$ {liveConta.contabilidade.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                     </div>
                     <div className="bg-muted rounded-lg p-3">
                       <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Composição (Razão)</p>
-                      <p className="font-mono font-semibold">R$ {selectedConta.composicao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                      <p className="font-mono font-semibold">R$ {liveConta.composicao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                     </div>
-                    <div className={`rounded-lg p-3 ${Math.abs(selectedConta.diferenca) < 0.01 ? 'bg-green-50 dark:bg-green-950' : 'bg-red-50 dark:bg-red-950'}`}>
+                    <div className={`rounded-lg p-3 ${Math.abs(liveConta.diferenca) < 0.01 ? 'bg-green-50 dark:bg-green-950' : 'bg-red-50 dark:bg-red-950'}`}>
                       <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Diferença</p>
-                      <p className={`font-mono font-semibold ${Math.abs(selectedConta.diferenca) < 0.01 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
-                        R$ {selectedConta.diferenca.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      <p className={`font-mono font-semibold ${Math.abs(liveConta.diferenca) < 0.01 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
+                        R$ {liveConta.diferenca.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </p>
                     </div>
                   </div>
@@ -569,7 +607,7 @@ export function Status() {
                     size="sm"
                     variant="outline"
                     onClick={() => { setShowManualForm(p => !p); setShowReconciled(false); }}
-                    className="border-blue-400 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950"
+                    className="border-blue-400 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-blue-950 dark:hover:text-blue-200"
                   >
                     <Plus className="w-4 h-4 mr-1" />
                     Novo Lançamento
@@ -578,7 +616,7 @@ export function Status() {
                     size="sm"
                     variant="outline"
                     onClick={handleSuggestReconciliation}
-                    className="border-purple-400 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950"
+                    className="border-purple-400 text-purple-600 hover:bg-purple-50 hover:text-purple-700 dark:hover:bg-purple-950 dark:hover:text-purple-200"
                   >
                     <Sparkles className="w-4 h-4 mr-1" />
                     Sugerir conciliação
@@ -611,7 +649,7 @@ export function Status() {
                       variant="outline"
                       disabled={selectedGlobalIndices.size === 0}
                       onClick={handleUnreconcileSelected}
-                      className="border-orange-400 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950 disabled:opacity-40"
+                      className="border-orange-400 text-orange-600 hover:bg-orange-50 hover:text-orange-700 dark:hover:bg-orange-950 dark:hover:text-orange-200 disabled:opacity-40"
                     >
                       <Clock className="w-4 h-4 mr-1" />
                       Mover para Pendentes
@@ -712,7 +750,7 @@ export function Status() {
                                 {mov.credito > 0 ? `R$ ${mov.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
                               </TableCell>
                               <TableCell className="text-right font-mono">
-                                R$ {mov.saldoExercicio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                R$ {(recalculatedSaldoByIdx.get(mov.globalIdx) ?? mov.saldoExercicio).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </TableCell>
                               <TableCell>
                                 {mov.isManual && (
@@ -755,7 +793,7 @@ export function Status() {
 
       {/* Dialog de sugestões de conciliação inteligente */}
       <Dialog open={showSuggestions} onOpenChange={setShowSuggestions}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-[95vw] w-[95vw] sm:max-w-6xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Sugestões de conciliação</DialogTitle>
             <DialogDescription>
@@ -766,37 +804,51 @@ export function Status() {
           {candidates.length === 0 ? (
             <p className="text-muted-foreground text-center py-8">Nenhum candidato de alta ou média confiança encontrado.</p>
           ) : (
-            <div className="space-y-3">
-              {candidates.map((c) => (
-                <div key={c.id} className="border rounded-lg p-3 flex gap-3">
-                  <Checkbox
-                    checked={approvedIds.has(c.id)}
-                    onCheckedChange={(checked) => {
-                      setApprovedIds((prev) => {
-                        const next = new Set(prev);
-                        if (checked) next.add(c.id); else next.delete(c.id);
-                        return next;
-                      });
-                    }}
-                  />
-                  <div className="flex-1 space-y-1">
-                    <Badge variant={c.confidence === 'ALTA' ? 'default' : 'secondary'}>
-                      {c.confidence} · {c.score}
-                    </Badge>
-                    {[...c.groupA, ...c.groupB].map((r) => (
-                      <div key={r.globalIdx} className="text-xs font-mono flex gap-2">
-                        <span>{(r.data instanceof Date ? r.data : new Date(r.data)).toLocaleDateString('pt-BR')}</span>
-                        <span className="flex-1 truncate">{r.historico}</span>
-                        <span>R$ {(r.debito || r.credito).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+            <>
+              <div className="flex justify-end">
+                <Button variant="outline" size="sm" onClick={handleToggleSelectAllSuggestions}>
+                  {allSuggestionsSelected ? 'Desmarcar todos' : 'Marcar todos'}
+                </Button>
+              </div>
+              <div className="space-y-4">
+                {candidates.map((c) => (
+                  <div key={c.id} className="border rounded-lg p-4 flex gap-4">
+                    <Checkbox
+                      className="mt-1"
+                      checked={approvedIds.has(c.id)}
+                      onCheckedChange={(checked) => {
+                        setApprovedIds((prev) => {
+                          const next = new Set(prev);
+                          if (checked) next.add(c.id); else next.delete(c.id);
+                          return next;
+                        });
+                      }}
+                    />
+                    <div className="flex-1 space-y-2">
+                      <Badge variant={c.confidence === 'ALTA' ? 'default' : 'secondary'}>
+                        {c.confidence} · {c.score}
+                      </Badge>
+                      <div className="space-y-1">
+                        {[...c.groupA, ...c.groupB].map((r) => (
+                          <div key={r.globalIdx} className="grid grid-cols-[6.5rem_1fr_9rem] gap-4 text-sm font-mono items-baseline">
+                            <span className="text-muted-foreground">
+                              {(r.data instanceof Date ? r.data : new Date(r.data)).toLocaleDateString('pt-BR')}
+                            </span>
+                            <span className="truncate" title={r.historico}>{r.historico}</span>
+                            <span className="text-right">
+                              R$ {(r.debito || r.credito).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                    <p className="text-xs text-muted-foreground">
-                      {c.reasons.valorDetalhe} · {c.reasons.textoDetalhe} · {c.reasons.dataDetalhe}
-                    </p>
+                      <p className="text-xs text-muted-foreground pt-1">
+                        {c.reasons.valorDetalhe} · {c.reasons.textoDetalhe} · {c.reasons.dataDetalhe}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </>
           )}
 
           <div className="flex justify-end gap-2 pt-2">
