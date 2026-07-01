@@ -85,6 +85,12 @@ interface AccountingState {
   deleteRazaoTransaction: (index: number) => void;
   reconcileRazaoTransactions: (indices: number[]) => void;
   unreconcileRazaoTransactions: (indices: number[]) => void;
+  logConciliacaoAuditoria: (params: {
+    contaNumero: string;
+    razaoIndices: number[];
+    score: number;
+    criterios: Record<string, unknown>;
+  }) => Promise<void>;
   calculateKPIs: () => KPIData;
 
   // Empresas
@@ -325,6 +331,19 @@ export const useAccountingStore = create<AccountingState>()(
           const reconciledRazaoIndices = state.reconciledRazaoIndices.filter((i) => !remove.has(i));
           return sync(state, { reconciledRazaoIndices });
         }),
+
+      logConciliacaoAuditoria: async ({ contaNumero, razaoIndices, score, criterios }) => {
+        const { tenantId, selectedEmpresaId, currentUser } = get();
+        if (!tenantId || !selectedEmpresaId || !currentUser) return;
+        try {
+          await svc.insertConciliacaoAuditoria({
+            tenantId, empresaId: selectedEmpresaId, contaNumero, razaoIndices, score, criterios,
+            usuarioId: currentUser.id,
+          });
+        } catch (error) {
+          console.error(error);
+        }
+      },
 
       // ── Empresas ──────────────────────────────────────────────────────────
 
