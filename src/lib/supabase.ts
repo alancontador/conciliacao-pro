@@ -87,3 +87,15 @@ export interface DbConvite {
   aceito: boolean;
   criado_em: string;
 }
+
+export interface DbConciliacaoAuditoria {
+  id: string;
+  tenant_id: string;
+  empresa_id: string;
+  conta_numero: string;
+  razao_indices: number[];
+  score: number;
+  criterios: Record<string, unknown>;
+  usuario_id: string | null;
+  criado_em: string;
+}
