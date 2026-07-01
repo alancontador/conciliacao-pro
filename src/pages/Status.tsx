@@ -25,10 +25,13 @@ import {
   Pencil,
   Trash2,
   Paperclip,
+  Sparkles,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type { Conta, RazaoRow, Documento } from '@/types/accounting';
 import * as XLSX from 'xlsx';
+import { generateCandidates } from '@/lib/reconciliation/engine';
+import type { ReconciliationCandidate } from '@/lib/reconciliation/types';
 
 export function Status() {
   const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, updateConta, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions } = useAccountingStore();
@@ -42,6 +45,9 @@ export function Status() {
   const [manualEntry, setManualEntry] = useState({ data: '', lote: '', historico: '', debito: '', credito: '' });
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editEntry, setEditEntry] = useState({ data: '', lote: '', historico: '', debito: '', credito: '' });
+  const [candidates, setCandidates] = useState<ReconciliationCandidate[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [approvedIds, setApprovedIds] = useState<Set<string>>(new Set());
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachTargetRef = useRef<string | null>(null);
@@ -108,6 +114,14 @@ export function Status() {
     setSelectedGlobalIndices(new Set());
   };
 
+  const handleSuggestReconciliation = useCallback(() => {
+    const pendingRows = allMovsWithIdx.filter((m) => !reconciledSet.has(m.globalIdx));
+    const results = generateCandidates(pendingRows).filter((c) => c.confidence !== 'BAIXA');
+    setCandidates(results);
+    setApprovedIds(new Set(results.filter((c) => c.confidence === 'ALTA').map((c) => c.id)));
+    setShowSuggestions(true);
+  }, [allMovsWithIdx, reconciledSet]);
+
   const handleDialogClose = (open: boolean) => {
     if (!open) {
       setSelectedConta(null);
@@ -116,6 +130,9 @@ export function Status() {
       setShowManualForm(false);
       setManualEntry({ data: '', lote: '', historico: '', debito: '', credito: '' });
       setEditingIdx(null);
+      setShowSuggestions(false);
+      setCandidates([]);
+      setApprovedIds(new Set());
     }
   };
 
@@ -532,6 +549,15 @@ export function Status() {
                   >
                     <Plus className="w-4 h-4 mr-1" />
                     Novo Lançamento
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleSuggestReconciliation}
+                    className="border-purple-400 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950"
+                  >
+                    <Sparkles className="w-4 h-4 mr-1" />
+                    Sugerir conciliação
                   </Button>
                 </div>
 
