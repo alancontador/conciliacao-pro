@@ -81,6 +81,8 @@ interface AccountingState {
   setBalanceteData: (data: BalanceteRow[]) => void;
   setRazaoData: (data: RazaoRow[]) => void;
   addImportHistory: (history: ImportHistory) => void;
+  removeImportHistory: (id: string) => void;
+  clearImportHistory: () => void;
   reconcileAccount: (numero: string, status: Conta['status']) => void;
   updateRazaoTransaction: (index: number, updates: Partial<RazaoRow>) => void;
   deleteRazaoTransaction: (index: number) => void;
@@ -288,6 +290,22 @@ export const useAccountingStore = create<AccountingState>()(
         const { tenantId, selectedEmpresaId } = get();
         if (tenantId && selectedEmpresaId) {
           svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { importHistory: get().importHistory }).catch(console.error);
+        }
+      },
+
+      removeImportHistory: (id) => {
+        set((state) => sync(state, { importHistory: state.importHistory.filter((h) => h.id !== id) }));
+        const { tenantId, selectedEmpresaId } = get();
+        if (tenantId && selectedEmpresaId) {
+          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { importHistory: get().importHistory }).catch(console.error);
+        }
+      },
+
+      clearImportHistory: () => {
+        set((state) => sync(state, { importHistory: [] }));
+        const { tenantId, selectedEmpresaId } = get();
+        if (tenantId && selectedEmpresaId) {
+          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { importHistory: [] }).catch(console.error);
         }
       },
 
