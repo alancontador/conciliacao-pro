@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import type { DbProfile, DbEmpresa, DbConta, DbDadosEmpresa, DbConvite, DbConciliacaoAuditoria } from '@/lib/supabase';
+import type { DbProfile, DbEmpresa, DbConta, DbDadosEmpresa, DbConvite } from '@/lib/supabase';
 import type { Empresa } from '@/types/empresa';
 import type { Usuario, PermissoesUsuario } from '@/types/usuario';
 import type { Conta, BalanceteRow, RazaoRow, ImportHistory } from '@/types/accounting';
