@@ -60,4 +60,44 @@ describe('generateSubsetSumCandidates', () => {
     ];
     expect(generateSubsetSumCandidates(rows, new Set([0]), RECONCILIATION_CONFIG)).toHaveLength(0);
   });
+
+  it('encontra combinacao no limite exato de maxCombinationSize (4)', () => {
+    const rows = [
+      row({ globalIdx: 0, debito: 300, data: new Date('2026-03-01') }),
+      row({ globalIdx: 1, debito: 300, data: new Date('2026-03-02') }),
+      row({ globalIdx: 2, debito: 300, data: new Date('2026-03-03') }),
+      row({ globalIdx: 3, debito: 300, data: new Date('2026-03-04') }),
+      row({ globalIdx: 4, credito: 1200, data: new Date('2026-03-05') }),
+    ];
+    const config = { ...RECONCILIATION_CONFIG, maxCombinationSize: 4 };
+    const candidates = generateSubsetSumCandidates(rows, new Set(), config);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].groupA.map((r) => r.globalIdx).sort()).toEqual([0, 1, 2, 3]);
+    expect(candidates[0].groupB[0].globalIdx).toBe(4);
+  });
+
+  it('nao encontra combinacao quando precisaria exceder maxCombinationSize', () => {
+    const rows = [
+      row({ globalIdx: 0, debito: 300, data: new Date('2026-03-01') }),
+      row({ globalIdx: 1, debito: 300, data: new Date('2026-03-02') }),
+      row({ globalIdx: 2, debito: 300, data: new Date('2026-03-03') }),
+      row({ globalIdx: 3, debito: 300, data: new Date('2026-03-04') }),
+      row({ globalIdx: 4, credito: 1200, data: new Date('2026-03-05') }),
+    ];
+    const config = { ...RECONCILIATION_CONFIG, maxCombinationSize: 3 };
+    expect(generateSubsetSumCandidates(rows, new Set(), config)).toHaveLength(0);
+  });
+
+  it('encontra 1 debito casado por soma de 3 creditos (direcao 1:N)', () => {
+    const rows = [
+      row({ globalIdx: 0, debito: 1200, data: new Date('2026-03-10') }),
+      row({ globalIdx: 1, credito: 400, data: new Date('2026-03-01') }),
+      row({ globalIdx: 2, credito: 400, data: new Date('2026-03-05') }),
+      row({ globalIdx: 3, credito: 400, data: new Date('2026-03-09') }),
+    ];
+    const candidates = generateSubsetSumCandidates(rows, new Set(), RECONCILIATION_CONFIG);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].groupA.map((r) => r.globalIdx)).toEqual([0]);
+    expect(candidates[0].groupB.map((r) => r.globalIdx).sort()).toEqual([1, 2, 3]);
+  });
 });
