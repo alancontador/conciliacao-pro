@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import type { DbProfile, DbEmpresa, DbConta, DbDadosEmpresa, DbConvite } from '@/lib/supabase';
+import type { DbProfile, DbEmpresa, DbConta, DbDadosEmpresa, DbConvite, DbConciliacaoAuditoria } from '@/lib/supabase';
 import type { Empresa } from '@/types/empresa';
 import type { Usuario, PermissoesUsuario } from '@/types/usuario';
 import type { Conta, BalanceteRow, RazaoRow, ImportHistory } from '@/types/accounting';
@@ -339,4 +339,27 @@ export async function upsertDadosEmpresa(
     const { error } = await supabase.from('dados_empresa').insert(payload);
     if (error) throw error;
   }
+}
+
+// ── Auditoria de Conciliação Inteligente ──────────────────────────────────────
+
+export async function insertConciliacaoAuditoria(params: {
+  tenantId: string;
+  empresaId: string;
+  contaNumero: string;
+  razaoIndices: number[];
+  score: number;
+  criterios: Record<string, unknown>;
+  usuarioId: string;
+}) {
+  const { error } = await supabase.from('conciliacoes_auditoria').insert({
+    tenant_id: params.tenantId,
+    empresa_id: params.empresaId,
+    conta_numero: params.contaNumero,
+    razao_indices: params.razaoIndices,
+    score: params.score,
+    criterios: params.criterios,
+    usuario_id: params.usuarioId,
+  });
+  if (error) throw error;
 }
