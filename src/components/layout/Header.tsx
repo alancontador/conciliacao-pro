@@ -35,7 +35,7 @@ export function Header() {
               {hasMultiple ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" className="h-auto p-0 hover:bg-transparent text-left">
+                    <Button variant="ghost" className="h-auto p-0 hover:bg-transparent hover:text-foreground text-left">
                       <div>
                         <p className="font-medium flex items-center gap-1">
                           {companyInfo.nome || 'Selecione uma empresa'}
