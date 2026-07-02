@@ -30,40 +30,78 @@ const normNum = (v: unknown): number => {
 // começa com 1 ou 2
 const startsWith1or2 = (s: string) => /^[12]/.test(s);
 
-// Normaliza string para comparação robusta:
-// - remove espaços extras, converte para NFC (cobre NFD vindo do Excel), lowercase
-const nl = (v: any): string => norm(v).normalize('NFC').toLowerCase();
+// Normaliza string para comparação robusta: NFC + lowercase + trim
+const nl = (v: any): string => String(v ?? '').normalize('NFC').trim().toLowerCase();
 
-// Detecta a linha de títulos das colunas do balancete.
-// Tolerante a variações de acento, espaço e rótulos abreviados.
+// Mapeamento dinâmico de colunas detectado a partir da linha de cabeçalho
+interface ColMap {
+  codigo: number;
+  classificacao: number;
+  descricao: number;
+  saldoAnterior: number;
+  debito: number;
+  credito: number;
+  saldoAtual: number;
+}
+
+// Lê a linha de cabeçalho e descobre em qual coluna está cada campo.
+// Suporta qualquer layout (colunas em posições fixas, deslocadas por "carac", ou
+// intercaladas com nulos por células mescladas).
+function detectColumnMap(headerRow: any[]): ColMap | null {
+  let codigo = -1, classificacao = -1, descricao = -1;
+  let saldoAnterior = -1, debito = -1, credito = -1, saldoAtual = -1;
+
+  headerRow.forEach((cell, i) => {
+    const v = nl(cell);
+    if (!v) return;
+
+    if ((v === 'código' || v === 'codigo' || v === 'cod' || v === 'cod.') && codigo === -1)
+      codigo = i;
+    else if (v.includes('classif') && classificacao === -1)
+      classificacao = i;
+    else if (v.includes('descri') && descricao === -1)
+      descricao = i;
+    else if (v.includes('saldo') && v.includes('anterior') && saldoAnterior === -1)
+      saldoAnterior = i;
+    else if ((v.includes('déb') || v.includes('deb')) && debito === -1)
+      debito = i;
+    else if ((v.includes('créd') || v.includes('cred')) && credito === -1)
+      credito = i;
+    else if (v.includes('saldo') && v.includes('atual') && saldoAtual === -1)
+      saldoAtual = i;
+  });
+
+  if (codigo === -1 || classificacao === -1 || descricao === -1 || saldoAnterior === -1
+    || debito === -1 || credito === -1 || saldoAtual === -1) return null;
+
+  return { codigo, classificacao, descricao, saldoAnterior, debito, credito, saldoAtual };
+}
+
+// Localiza a linha de títulos de colunas em qualquer posição do arquivo.
+// Procura a primeira linha que contenha "código", "classif", "descri" e "saldo anterior"
+// em QUALQUER coluna — tolerante a colunas extras (ex: "carac") e células mescladas.
 function findHeaderIndex(rows: any[][]): number {
   return rows.findIndex(r => {
-    if (!Array.isArray(r) || r.length < 6) return false;
-    const a = nl(r[0]);
-    const b = nl(r[1]);
-    const c = nl(r[2]);
-    const d = nl(r[3]);
-    const e = nl(r[4]);
-    const f = nl(r[5]);
-    const g = nl(r[6] ?? '');
+    if (!Array.isArray(r)) return false;
+    const vals = r.map(v => nl(v));
     return (
-      (a === 'código' || a === 'codigo' || a === 'cod.' || a === 'cod') &&
-      (b.includes('classif')) &&
-      (c.includes('descri')) &&
-      (d.includes('saldo') && (d.includes('ant') || d.includes('anter'))) &&
-      (e.includes('déb') || e.includes('deb') || e === 'd') &&
-      (f.includes('créd') || f.includes('cred') || f === 'c') &&
-      (g.includes('saldo') || g.includes('sd'))
+      vals.some(v => v === 'código' || v === 'codigo') &&
+      vals.some(v => v.includes('classif')) &&
+      vals.some(v => v.includes('descri')) &&
+      vals.some(v => v.includes('saldo') && v.includes('anterior'))
     );
   });
 }
 
 // Detecta se o arquivo tem um bloco de informações (empresa/CNPJ/período) antes dos dados.
+// Verifica col 0 ou col 1, pois alguns layouts têm col 0 nula na linha de empresa.
 function hasInfoBlock(rows: any[][]): boolean {
   if (!rows.length) return false;
-  const a0 = nl(rows[0]?.[0] ?? '');
-  return a0.startsWith('empresa') || a0.startsWith('razão') || a0.startsWith('razao')
-    || a0.startsWith('cnpj') || a0.startsWith('periodo') || a0.startsWith('período');
+  const check = (v: string) =>
+    v.startsWith('empresa') || v.startsWith('razão') || v.startsWith('razao')
+    || v.startsWith('cnpj') || v.startsWith('c.n.p.j')
+    || v.startsWith('periodo') || v.startsWith('período');
+  return check(nl(rows[0]?.[0] ?? '')) || check(nl(rows[0]?.[1] ?? ''));
 }
 
 type Linha = {
@@ -79,7 +117,7 @@ type Linha = {
 
 type LinhaPreview = Linha & { id: number };
 
-// extrai linhas do layout (A,B,C,D,E,F,G) após o cabeçalho
+// extrai linhas do balancete após o cabeçalho, usando mapeamento dinâmico de colunas.
 // formato: 'sem-cabecalho' = arquivo começa direto nos dados (header na 1ª linha)
 //          'com-cabecalho' = arquivo tem bloco empresa/CNPJ/período antes dos dados
 function extractRowsFromLayout(
@@ -88,26 +126,25 @@ function extractRowsFromLayout(
   withIds = false,
   formato: FormatoBalancete = 'sem-cabecalho',
 ) {
-  let hdr = findHeaderIndex(raw);
-
-  // Se não encontrou (hdr === -1) e o modo é sem-cabecalho, assume linha 0 como cabeçalho.
-  // Isso cobre arquivos cujas colunas têm rótulos ligeiramente diferentes dos esperados.
-  if (hdr === -1 && formato === 'sem-cabecalho') hdr = 0;
+  const hdr = findHeaderIndex(raw);
   if (hdr === -1) return [];
+
+  const colMap = detectColumnMap(raw[hdr]);
+  if (!colMap) return [];
 
   const data = raw.slice(hdr + 1);
 
   const out = data
     .map((r, i) => {
-      const codigo = norm(r[0]);              // Col A
-      const classif = norm(r[1]);             // Col B
-      const classifDigits = classif.replace(/\D/g, '');
-      const descricao = norm(r[2]);           // Col C
-      const saldoAnterior = normNum(r[3]);    // Col D
-      const debito = normNum(r[4]);           // Col E
-      const credito = normNum(r[5]);          // Col F
-      const saldoAtualRaw = r[6];            // Col G (bruto, antes de normalizar)
-      let saldoAtual = normNum(saldoAtualRaw);
+      const codigo   = norm(r[colMap.codigo]);
+      const classif  = norm(r[colMap.classificacao]);
+      const classifDigits = classif.replace(/[^0-9]/g, '');
+      const descricao = norm(r[colMap.descricao]);
+      const saldoAnterior = normNum(r[colMap.saldoAnterior]);
+      const debito        = normNum(r[colMap.debito]);
+      const credito       = normNum(r[colMap.credito]);
+      const saldoAtualRaw = r[colMap.saldoAtual];
+      let   saldoAtual    = normNum(saldoAtualRaw);
 
       // Fallback APENAS quando a célula está genuinamente vazia (não quando é zero de fato).
       // Usa a fórmula correta por natureza: ATIVO = ant + deb − cred; PASSIVO = ant − deb + cred.
@@ -133,7 +170,7 @@ function extractRowsFromLayout(
       const base: Linha = {
         codigo,
         classificacao: classif,
-        descricao,
+        descricao: descricao.replace(/^\s+/, ''), // remove indentação do sistema
         saldoAnterior,
         debito,
         credito,
