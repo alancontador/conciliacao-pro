@@ -37,11 +37,11 @@ export function Header() {
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" className="h-auto p-0 hover:bg-transparent hover:text-foreground text-left">
                       <div>
-                        <p className="font-medium flex items-center gap-1">
+                        <p className="font-semibold flex items-center gap-1">
                           {companyInfo.nome || 'Selecione uma empresa'}
                           <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
                         </p>
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                           {companyInfo.cnpj || 'CNPJ não informado'}
                         </p>
                       </div>
@@ -79,8 +79,8 @@ export function Header() {
                 </DropdownMenu>
               ) : (
                 <div>
-                  <p className="font-medium">{companyInfo.nome || 'Empresa não definida'}</p>
-                  <p className="text-sm text-muted-foreground">
+                  <p className="font-semibold">{companyInfo.nome || 'Empresa não definida'}</p>
+                  <p className="text-xs text-muted-foreground">
                     {companyInfo.cnpj || 'CNPJ não informado'}
                   </p>
                 </div>
@@ -88,20 +88,20 @@ export function Header() {
             </div>
 
             <div className="flex items-center space-x-2">
-              <Calendar className="w-5 h-5 text-muted-foreground" />
+              <Calendar className="w-4 h-4 text-muted-foreground" />
               <div>
-                <p className="font-medium">{companyInfo.periodo || 'Período não definido'}</p>
-                <p className="text-sm text-muted-foreground">Período de análise</p>
+                <p className="text-sm font-medium">{companyInfo.periodo || 'Período não definido'}</p>
+                <p className="text-xs text-muted-foreground">Período de análise</p>
               </div>
             </div>
 
             <div className="flex items-center space-x-2">
-              <User className="w-5 h-5 text-muted-foreground" />
+              <User className="w-4 h-4 text-muted-foreground" />
               <div>
-                <p className="font-medium">
+                <p className="text-sm font-medium">
                   {companyInfo.responsavel || 'Responsável não definido'}
                 </p>
-                <p className="text-sm text-muted-foreground">Contador responsável</p>
+                <p className="text-xs text-muted-foreground">Contador responsável</p>
               </div>
             </div>
           </div>
