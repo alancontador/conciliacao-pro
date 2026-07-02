@@ -5,8 +5,24 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Building2, Lock, Mail, Eye, EyeOff, UserPlus, KeyRound } from 'lucide-react';
+import { Building2, Lock, Mail, Eye, EyeOff, UserPlus, KeyRound, Phone } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+
+const formatCnpj = (v: string): string => {
+  const d = v.replace(/\D/g, '').slice(0, 14);
+  if (d.length <= 2) return d;
+  if (d.length <= 5) return `${d.slice(0, 2)}.${d.slice(2)}`;
+  if (d.length <= 8) return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5)}`;
+  if (d.length <= 12) return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8)}`;
+  return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
+};
+
+const formatPhone = (v: string): string => {
+  const d = v.replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 2) return d.length ? `(${d}` : '';
+  if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+};
 
 type Tab = 'login' | 'signup' | 'reset';
 
@@ -26,6 +42,7 @@ export function Login() {
   // Signup
   const [tenantNome, setTenantNome] = useState('');
   const [tenantCnpj, setTenantCnpj] = useState('');
+  const [tenantPhone, setTenantPhone] = useState('');
   const [adminNome, setAdminNome] = useState('');
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPass, setSignupPass] = useState('');
@@ -53,6 +70,14 @@ export function Login() {
     e.preventDefault();
     if (!tenantNome.trim() || !adminNome.trim() || !signupEmail.trim() || !signupPass) {
       toast({ title: 'Preencha todos os campos obrigatórios', variant: 'destructive' });
+      return;
+    }
+    if (tenantCnpj.replace(/\D/g, '').length !== 14) {
+      toast({ title: 'CNPJ inválido', description: 'Informe um CNPJ completo (14 dígitos).', variant: 'destructive' });
+      return;
+    }
+    if (tenantPhone.replace(/\D/g, '').length !== 11) {
+      toast({ title: 'Telefone inválido', description: 'Informe um celular completo com DDD.', variant: 'destructive' });
       return;
     }
     if (signupPass.length < 6) {
@@ -179,9 +204,27 @@ export function Login() {
                     value={tenantNome} onChange={(e) => setTenantNome(e.target.value)} autoFocus />
                 </div>
                 <div className="space-y-1">
-                  <Label>CNPJ do escritório</Label>
-                  <Input placeholder="00.000.000/0000-00"
-                    value={tenantCnpj} onChange={(e) => setTenantCnpj(e.target.value)} />
+                  <Label>CNPJ do escritório <span className="text-destructive">*</span></Label>
+                  <Input
+                    placeholder="00.000.000/0000-00"
+                    maxLength={18}
+                    value={tenantCnpj}
+                    onChange={(e) => setTenantCnpj(formatCnpj(e.target.value))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Telefone do escritório <span className="text-destructive">*</span></Label>
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      type="tel"
+                      placeholder="(00) 00000-0000"
+                      maxLength={15}
+                      className="pl-9"
+                      value={tenantPhone}
+                      onChange={(e) => setTenantPhone(formatPhone(e.target.value))}
+                    />
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <Label>Seu nome (administrador) <span className="text-destructive">*</span></Label>

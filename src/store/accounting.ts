@@ -64,6 +64,10 @@ interface AccountingState {
   // Usuários (cache local)
   usuarios: Usuario[];
 
+  // Configurações globais
+  prazoMedioRegularizacao: number;
+  setPrazoMedioRegularizacao: (dias: number) => void;
+
   // Ações de inicialização
   initSession: () => Promise<void>;
   loadTenantData: (tenantId: string, userId: string) => Promise<void>;
@@ -129,6 +133,7 @@ export const useAccountingStore = create<AccountingState>()(
       selectedEmpresaId: null,
       dadosPorEmpresa: {},
       usuarios: [],
+      prazoMedioRegularizacao: 15,
 
       // ── Inicialização ─────────────────────────────────────────────────────
 
@@ -244,6 +249,8 @@ export const useAccountingStore = create<AccountingState>()(
       requestPasswordReset: async (email) => {
         await svc.resetPasswordForEmail(email);
       },
+
+      setPrazoMedioRegularizacao: (dias) => set({ prazoMedioRegularizacao: dias }),
 
       // ── Setters com sync ao Supabase ──────────────────────────────────────
 
@@ -603,7 +610,7 @@ export const useAccountingStore = create<AccountingState>()(
           totalContas, contasConciliadas,
           contasPendentes: effectiveContas.filter((c) => c.status === 'NAO_CONCILIADO').length,
           percentualConciliacao: totalContas > 0 ? (contasConciliadas / totalContas) * 100 : 0,
-          contasAlerta, prazoMedioRegularizacao: 15,
+          contasAlerta, prazoMedioRegularizacao: get().prazoMedioRegularizacao,
         };
       },
     }),
@@ -614,6 +621,7 @@ export const useAccountingStore = create<AccountingState>()(
       partialize: (state) => ({
         selectedEmpresaId: state.selectedEmpresaId,
         dadosPorEmpresa: state.dadosPorEmpresa, // cache offline
+        prazoMedioRegularizacao: state.prazoMedioRegularizacao,
       }),
     },
   ),
