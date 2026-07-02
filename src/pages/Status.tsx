@@ -26,7 +26,13 @@ import {
   Trash2,
   Paperclip,
   Sparkles,
+  RotateCcw,
 } from 'lucide-react';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import type { Conta, RazaoRow, Documento } from '@/types/accounting';
 import * as XLSX from 'xlsx';
@@ -34,7 +40,7 @@ import { generateCandidates } from '@/lib/reconciliation/engine';
 import type { ReconciliationCandidate } from '@/lib/reconciliation/types';
 
 export function Status() {
-  const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, updateConta, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions, logConciliacaoAuditoria } = useAccountingStore();
+  const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, updateConta, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions, logConciliacaoAuditoria, resetEmpresaData, currentUser, empresas, selectedEmpresaId } = useAccountingStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [naturezaFilter, setNaturezaFilter] = useState<string>('all');
@@ -392,34 +398,79 @@ export function Status() {
 
   const handleExportExcel = () => {
     if (filteredContas.length === 0) {
-      toast({
-        title: 'Nenhum dado para exportar',
-        description: 'Importe os dados primeiro.',
-        variant: 'destructive',
-      });
+      toast({ title: 'Nenhum dado para exportar', description: 'Importe os dados primeiro.', variant: 'destructive' });
       return;
     }
 
-    const exportData = filteredContas.map(conta => ({
-      'Conta': conta.numero,
-      'Descrição': conta.descricao,
-      'Natureza': conta.natureza,
-      'Contabilidade': conta.contabilidade,
-      'Composição': conta.composicao,
-      'Diferença': conta.diferenca,
-      'Status': conta.status.replace('_', ' '),
-      'Documentos': conta.documentos.length > 0 ? 'Sim' : 'Não',
-    }));
+    const statusLabel: Record<string, string> = {
+      CONCILIADO: 'Conciliado',
+      NAO_CONCILIADO: 'Não Conciliado',
+      EM_ANALISE: 'Em Análise',
+    };
 
-    const ws = XLSX.utils.json_to_sheet(exportData);
+    const empresa = empresas.find((e) => e.id === selectedEmpresaId);
+
+    // Cabeçalho com informações da empresa
+    const header = [
+      ['ConciliaçãoPRO — Status das Contas'],
+      [empresa ? `Empresa: ${empresa.razaoSocial}` : '', empresa?.cnpj ? `CNPJ: ${empresa.cnpj}` : '', empresa?.periodo ? `Período: ${empresa.periodo}` : ''],
+      [`Gerado em: ${new Date().toLocaleString('pt-BR')}`],
+      [], // linha em branco
+      ['Conta', 'Descrição', 'Natureza', 'Contabilidade (R$)', 'Composição (R$)', 'Diferença (R$)', 'Status', 'Doc. Suporte'],
+    ];
+
+    const rows = filteredContas.map((conta) => [
+      conta.numero,
+      conta.descricao,
+      conta.natureza,
+      parseFloat(Number(conta.contabilidade).toFixed(2)),
+      parseFloat(Number(conta.composicao).toFixed(2)),
+      parseFloat(Number(conta.diferenca).toFixed(2)),
+      statusLabel[conta.status] ?? conta.status,
+      conta.documentos.length > 0 ? `Sim (${conta.documentos.length})` : 'Não',
+    ]);
+
+    const ws = XLSX.utils.aoa_to_sheet([...header, ...rows]);
+
+    // Largura das colunas
+    ws['!cols'] = [
+      { wch: 10 }, // Conta
+      { wch: 40 }, // Descrição
+      { wch: 10 }, // Natureza
+      { wch: 18 }, // Contabilidade
+      { wch: 16 }, // Composição
+      { wch: 14 }, // Diferença
+      { wch: 16 }, // Status
+      { wch: 12 }, // Doc. Suporte
+    ];
+
+    // Formato numérico com 2 casas decimais para colunas D, E, F (índice 3,4,5)
+    const dataStartRow = header.length + 1; // linha 1-based onde começa os dados
+    const numFmt = '#,##0.00';
+    for (let r = dataStartRow; r <= dataStartRow + rows.length - 1; r++) {
+      ['D', 'E', 'F'].forEach((col) => {
+        const cell = ws[`${col}${r}`];
+        if (cell && typeof cell.v === 'number') {
+          cell.t = 'n';
+          cell.z = numFmt;
+        }
+      });
+    }
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Status das Contas');
-    XLSX.writeFile(wb, `status-contas-${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(wb, `status-contas-${empresa?.razaoSocial?.replace(/\s+/g, '-') ?? 'empresa'}-${new Date().toISOString().split('T')[0]}.xlsx`);
 
-    toast({
-      title: 'Exportação concluída',
-      description: 'Arquivo Excel foi baixado com sucesso.',
-    });
+    toast({ title: 'Exportação concluída', description: `${filteredContas.length} contas exportadas.` });
+  };
+
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const canManage = currentUser?.role === 'admin' || currentUser?.role === 'gerente';
+
+  const handleReset = () => {
+    resetEmpresaData();
+    setShowResetDialog(false);
+    toast({ title: 'Dados resetados', description: 'Todos os dados da empresa foram limpos.' });
   };
 
   const handleReconcile = (numero: string, status: Conta['status']) => {
@@ -514,6 +565,31 @@ export function Status() {
               <Download className="w-4 h-4 mr-2" />
               Exportar Excel
             </Button>
+
+            {canManage && (
+              <AlertDialog open={showResetDialog} onOpenChange={setShowResetDialog}>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" className="text-destructive hover:text-destructive border-destructive/30 hover:border-destructive">
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                    Resetar
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Resetar todos os dados?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Esta ação irá apagar <strong>todos os dados</strong> da empresa selecionada: balancete, razão, status de conciliação e histórico de importações. Os dados não poderão ser recuperados. Será necessário importar os arquivos novamente.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleReset} className="bg-destructive hover:bg-destructive/90">
+                      Resetar tudo
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </div>
         </CardContent>
       </Card>
