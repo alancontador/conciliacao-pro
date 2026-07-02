@@ -79,10 +79,18 @@ function extractRowsFromLayout(raw: any[][], minChars: number, withIds = false) 
       const saldoAnterior = normNum(r[3]);    // Col D
       const debito = normNum(r[4]);           // Col E
       const credito = normNum(r[5]);          // Col F
-      let saldoAtual = normNum(r[6]);         // Col G
+      const saldoAtualRaw = r[6];            // Col G (bruto, antes de normalizar)
+      let saldoAtual = normNum(saldoAtualRaw);
 
-      if (!saldoAtual && (saldoAnterior || debito || credito)) {
-        saldoAtual = saldoAnterior - debito + credito;
+      // Fallback APENAS quando a célula está genuinamente vazia (não quando é zero de fato).
+      // Usa a fórmula correta por natureza: ATIVO = ant + deb − cred; PASSIVO = ant − deb + cred.
+      const isSaldoAtualBlank = saldoAtualRaw == null || saldoAtualRaw === ''
+        || (typeof saldoAtualRaw === 'string' && saldoAtualRaw.trim() === '');
+      if (isSaldoAtualBlank && (saldoAnterior || debito || credito)) {
+        const isAtivo = /^1/.test(classif);
+        saldoAtual = isAtivo
+          ? saldoAnterior + debito - credito
+          : saldoAnterior - debito + credito;
       }
 
       const valida =
