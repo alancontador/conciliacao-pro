@@ -35,7 +35,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import type { Conta, RazaoRow, Documento } from '@/types/accounting';
-import * as XLSX from 'xlsx';
+import { Workbook } from 'exceljs';
 import { generateCandidates } from '@/lib/reconciliation/engine';
 import type { ReconciliationCandidate } from '@/lib/reconciliation/types';
 
@@ -396,7 +396,7 @@ export function Status() {
     }
   };
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     if (filteredContas.length === 0) {
       toast({ title: 'Nenhum dado para exportar', description: 'Importe os dados primeiro.', variant: 'destructive' });
       return;
@@ -409,59 +409,136 @@ export function Status() {
     };
 
     const empresa = empresas.find((e) => e.id === selectedEmpresaId);
-    const numFmt = '#,##0.00';
+    const nomeEmpresa = empresa?.razaoSocial ?? 'Empresa';
 
-    // Constrói o worksheet célula a célula para garantir tipos corretos
-    const ws: XLSX.WorkSheet = {};
-
-    const addCell = (r: number, c: number, value: string | number) => {
-      const ref = XLSX.utils.encode_cell({ r, c });
-      if (typeof value === 'number' && !isNaN(value)) {
-        ws[ref] = { t: 'n', v: value, z: numFmt };
-      } else {
-        ws[ref] = { t: 's', v: String(value ?? '') };
-      }
-    };
-
-    // Cabeçalho informativo
-    addCell(0, 0, 'ConciliaçãoPRO — Status das Contas');
-    if (empresa) addCell(1, 0, `Empresa: ${empresa.razaoSocial}`);
-    addCell(2, 0, `Gerado em: ${new Date().toLocaleString('pt-BR')}`);
-    if (empresa?.cnpj)   addCell(3, 0, `CNPJ: ${empresa.cnpj}`);
-    if (empresa?.periodo) addCell(4, 0, `Período: ${empresa.periodo}`);
-    // linha 5 em branco
-
-    // Títulos das colunas (linha 6, índice 6)
-    const colTitles = ['Conta', 'Descrição', 'Natureza', 'Contabilidade (R$)', 'Composição (R$)', 'Diferença (R$)', 'Status', 'Doc. Suporte'];
-    colTitles.forEach((t, c) => addCell(6, c, t));
-
-    // Linhas de dados a partir da linha 7 (índice 7)
-    filteredContas.forEach((conta, i) => {
-      const r = 7 + i;
-      addCell(r, 0, Number(conta.numero) || 0);   // Conta como número
-      addCell(r, 1, conta.descricao ?? '');
-      addCell(r, 2, conta.natureza ?? '');
-      addCell(r, 3, Number(conta.contabilidade) || 0);
-      addCell(r, 4, Number(conta.composicao) || 0);
-      addCell(r, 5, Number(conta.diferenca) || 0);
-      addCell(r, 6, statusLabel[conta.status] ?? conta.status);
-      addCell(r, 7, conta.documentos.length > 0 ? `Sim (${conta.documentos.length})` : 'Não');
+    const workbook = new Workbook();
+    const sheet = workbook.addWorksheet('Status das Contas', {
+      views: [{ showGridLines: false }],
     });
 
-    ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 7 + filteredContas.length - 1, c: 7 } });
+    const thinBorder = {
+      top: { style: 'thin' as const },
+      bottom: { style: 'thin' as const },
+      left: { style: 'thin' as const },
+      right: { style: 'thin' as const },
+    };
 
-    ws['!cols'] = [
-      { wch: 10 }, { wch: 40 }, { wch: 10 },
-      { wch: 18 }, { wch: 16 }, { wch: 14 },
-      { wch: 16 }, { wch: 12 },
+    // Cabeçalho informativo (linhas sem bordas, apenas negrito)
+    const infoLines = [
+      'ConciliaçãoPRO — Status das Contas',
+      empresa ? `Empresa: ${nomeEmpresa}` : '',
+      `Gerado em: ${new Date().toLocaleString('pt-BR')}`,
+      empresa?.cnpj ? `CNPJ: ${empresa.cnpj}` : '',
+      empresa?.periodo ? `Período: ${empresa.periodo}` : '',
+    ].filter(Boolean) as string[];
+
+    infoLines.forEach((line, i) => {
+      const cell = sheet.getRow(i + 1).getCell(1);
+      cell.value = line;
+      cell.font = { bold: true, size: 11 };
+      cell.alignment = { horizontal: 'left', vertical: 'middle' };
+    });
+
+    // Linha em branco entre cabeçalho e tabela
+    const titleRowIdx = infoLines.length + 2;
+
+    // Linha de títulos das colunas
+    const titleRow = sheet.getRow(titleRowIdx);
+    titleRow.height = 22;
+    const headers = [
+      'Conta', 'Descrição', 'Natureza',
+      'Contabilidade (R$)', 'Composição (R$)', 'Diferença (R$)',
+      'Status', 'Doc. Suporte',
     ];
+    headers.forEach((h, i) => {
+      const cell = titleRow.getCell(i + 1);
+      cell.value = h;
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1D4ED8' } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = thinBorder;
+    });
+    titleRow.commit();
 
-    const nomeEmpresa = empresa?.razaoSocial ?? 'Empresa';
-    const nomeArquivo = `Status Conciliação - ${nomeEmpresa}.xlsx`;
+    // Formato contábil brasileiro
+    const acctFmt = '_("R$"* #,##0.00_);_("R$"* (#,##0.00);_("R$"* "-"??_);_(@_)';
 
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Status das Contas');
-    XLSX.writeFile(wb, nomeArquivo);
+    // Largura da coluna Descrição: auto-ajustada pelo conteúdo
+    let maxDescLen = 20;
+
+    // Linhas de dados
+    filteredContas.forEach((conta, i) => {
+      const row = sheet.getRow(titleRowIdx + 1 + i);
+
+      const c1 = row.getCell(1); // Conta
+      c1.value = Number(conta.numero) || 0;
+      c1.numFmt = 'General';
+      c1.alignment = { horizontal: 'center', vertical: 'middle' };
+      c1.border = thinBorder;
+
+      const descLen = (conta.descricao ?? '').length;
+      if (descLen > maxDescLen) maxDescLen = descLen;
+      const c2 = row.getCell(2); // Descrição
+      c2.value = conta.descricao ?? '';
+      c2.alignment = { vertical: 'middle', wrapText: false };
+      c2.border = thinBorder;
+
+      const c3 = row.getCell(3); // Natureza
+      c3.value = conta.natureza ?? '';
+      c3.alignment = { horizontal: 'center', vertical: 'middle' };
+      c3.border = thinBorder;
+
+      const c4 = row.getCell(4); // Contabilidade
+      c4.value = Number(conta.contabilidade) || 0;
+      c4.numFmt = acctFmt;
+      c4.border = thinBorder;
+
+      const c5 = row.getCell(5); // Composição
+      c5.value = Number(conta.composicao) || 0;
+      c5.numFmt = acctFmt;
+      c5.border = thinBorder;
+
+      const c6 = row.getCell(6); // Diferença
+      c6.value = Number(conta.diferenca) || 0;
+      c6.numFmt = acctFmt;
+      c6.border = thinBorder;
+
+      const c7 = row.getCell(7); // Status
+      c7.value = statusLabel[conta.status] ?? conta.status;
+      c7.alignment = { horizontal: 'center', vertical: 'middle' };
+      c7.border = thinBorder;
+
+      const c8 = row.getCell(8); // Doc. Suporte
+      c8.value = conta.documentos.length > 0 ? `Sim (${conta.documentos.length})` : 'Não';
+      c8.alignment = { horizontal: 'center', vertical: 'middle' };
+      c8.border = thinBorder;
+
+      row.commit();
+    });
+
+    // Larguras das colunas
+    sheet.getColumn(1).width = 10;
+    sheet.getColumn(2).width = Math.min(maxDescLen + 4, 55);
+    sheet.getColumn(3).width = 10;
+    sheet.getColumn(4).width = 21;
+    sheet.getColumn(5).width = 19;
+    sheet.getColumn(6).width = 17;
+    sheet.getColumn(7).width = 16;
+    sheet.getColumn(8).width = 14;
+
+    // Gera o arquivo e faz o download
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Status Conciliação - ${nomeEmpresa}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 
     toast({ title: 'Exportação concluída', description: `${filteredContas.length} contas exportadas.` });
   };

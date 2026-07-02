@@ -156,33 +156,33 @@ const fillDownConta = (rows: LinhaRazao[]) => {
   let last=''; for (const r of rows){ if (!r.conta) r.conta=last; else last=r.conta; }
 };
 
-// ===== parser CSV (layout fixo Windows-1252, separador ";") =====
+// ===== parser de layout fixo (mesmo layout do export CSV do sistema contábil) =====
 // Colunas: data=0, lote=4, histórico=10, cta.c.part=20, débito=22, crédito=24, saldo=29
 // Linha de conta: col 0 = "Conta:", col 9 = código da conta
+// Compartilhado entre o parser de .csv (texto separado por ";") e o de .xlsx/.xls
+// (planilha exportada do mesmo relatório, com as mesmas colunas na mesma ordem).
 const readAsWindows1252 = (file: File): Promise<string> =>
   file.arrayBuffer().then(buf => {
     try { return new TextDecoder('windows-1252').decode(buf); }
     catch { return new TextDecoder('utf-8').decode(buf); }
   });
 
-const processCSV = (text: string): { rows: LinhaRazao[]; totalRaw: number } => {
-  const lines = text.split(/\r?\n/);
+const processFixedLayoutRows = (matrix: any[][]): { rows: LinhaRazao[]; totalRaw: number } => {
   const out: LinhaRazao[] = [];
   let currentConta = '';
 
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    const cols = line.split(';');
-    const col0 = (cols[0] ?? '').trim().toUpperCase();
+  for (const cols of matrix) {
+    if (!cols || cols.every(c => c == null || String(c).trim() === '')) continue;
+    const col0 = String(cols[0] ?? '').trim().toUpperCase();
 
     // Linha de definição de conta — col 2 contém o código reduzido que bate com balancete.codigo
     if (col0 === 'CONTA:') {
-      currentConta = (cols[2] ?? '').trim();
+      currentConta = String(cols[2] ?? '').trim();
       continue;
     }
 
     // Linhas de resumo/cabeçalho a ignorar
-    const lineUpper = line.toUpperCase();
+    const lineUpper = cols.map(c => String(c ?? '')).join(' ').toUpperCase();
     if (
       lineUpper.includes('SALDO ANTERIOR') ||
       lineUpper.includes('TOTAL DO M') ||
@@ -200,21 +200,27 @@ const processCSV = (text: string): { rows: LinhaRazao[]; totalRaw: number } => {
     }
 
     // Linha de transação: col 0 deve ser data válida
-    const data = parseDateCell((cols[0] ?? '').trim());
+    const data = parseDateCell(cols[0]);
     if (!isValidDate(data)) continue;
 
-    const lote = (cols[4] ?? '').trim();
-    const historico = (cols[10] ?? '').trim();
-    const debito = parseNumberBR((cols[22] ?? '').trim());
-    const credito = parseNumberBR((cols[24] ?? '').trim());
-    const saldoRaw = (cols[29] ?? '').trim().replace(/[dDcC]$/, '');
+    const lote = String(cols[4] ?? '').trim();
+    const historico = String(cols[10] ?? '').trim();
+    const debito = parseNumberBR(cols[22]);
+    const credito = parseNumberBR(cols[24]);
+    const saldoRaw = typeof cols[29] === 'string' ? cols[29].trim().replace(/[dDcC]$/, '') : cols[29];
     const saldoExercicio = parseNumberBR(saldoRaw);
 
     out.push({ conta: currentConta, data: data as Date, lote, historico, debito, credito, saldoExercicio });
   }
 
   out.forEach((r, i) => { r.id = i; });
-  return { rows: out, totalRaw: lines.length };
+  return { rows: out, totalRaw: matrix.length };
+};
+
+const processCSV = (text: string): { rows: LinhaRazao[]; totalRaw: number } => {
+  const lines = text.split(/\r?\n/);
+  const matrix = lines.map(line => line.split(';'));
+  return processFixedLayoutRows(matrix);
 };
 
 // ===== parser principal =====
@@ -223,6 +229,12 @@ const processWorkbook = (wb: XLSX.WorkBook) => {
   const sh = wb.Sheets[sheetName];
   const raw: any[][] = XLSX.utils.sheet_to_json(sh, { header: 1, raw: true, blankrows: false }) as any[][];
   if (!raw.length) return { rows: [] as LinhaRazao[], totalRaw: 0 };
+
+  // Tenta primeiro o layout fixo (mesmo do parser de .csv): muitas planilhas Excel são o
+  // mesmo relatório do razão exportado com as mesmas colunas na mesma ordem. Só cai para a
+  // detecção inteligente por cabeçalho abaixo se o layout fixo não achar nenhuma linha válida.
+  const fixedLayout = processFixedLayoutRows(raw);
+  if (fixedLayout.rows.length > 0) return fixedLayout;
 
   const { trimmed } = trimLeftEmptyColumns(raw, 20);
   const headerIdx = detectHeaderRow(trimmed);
