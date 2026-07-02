@@ -156,18 +156,40 @@ const fillDownConta = (rows: LinhaRazao[]) => {
   let last=''; for (const r of rows){ if (!r.conta) r.conta=last; else last=r.conta; }
 };
 
-// ===== parser de layout fixo (mesmo layout do export CSV do sistema contábil) =====
-// Colunas: data=0, lote=4, histórico=10, cta.c.part=20, débito=22, crédito=24, saldo=29
-// Linha de conta: col 0 = "Conta:", col 9 = código da conta
-// Compartilhado entre o parser de .csv (texto separado por ";") e o de .xlsx/.xls
-// (planilha exportada do mesmo relatório, com as mesmas colunas na mesma ordem).
 const readAsWindows1252 = (file: File): Promise<string> =>
   file.arrayBuffer().then(buf => {
     try { return new TextDecoder('windows-1252').decode(buf); }
     catch { return new TextDecoder('utf-8').decode(buf); }
   });
 
+// Parser compartilhado entre CSV e XLSX para razão contábil.
+// Detecta dinamicamente as colunas a partir do cabeçalho (linha com DATA + DEBITO/CREDITO).
+// Suporta dois layouts exportados pelo mesmo sistema:
+//   FRIGEL: lote=col4, hist=col10, débito=col22, crédito=col24, saldo=col29 (formato esparso)
+//   PA:     lote=col1, hist=col2,  débito=col7,  crédito=col8,  saldo=col11 (formato compacto)
+// Linha de conta: "Conta:" no col0; short code em col1 (PA) ou col2 (FRIGEL quando col1 vazio).
 const processFixedLayoutRows = (matrix: any[][]): { rows: LinhaRazao[]; totalRaw: number } => {
+  // Fase 1 — detectar posições de colunas a partir do cabeçalho
+  let colLote = 4, colHist = 10, colDebito = 22, colCredito = 24, colSaldo = 29;
+
+  for (let i = 0; i < Math.min(20, matrix.length); i++) {
+    const row = matrix[i] || [];
+    const normed = row.map((v: any) => normalize(v));
+    if (!normed.some(h => h === 'DATA')) continue;
+    if (!normed.some(h => h.includes('DEB') || h.includes('CRED'))) continue;
+
+    normed.forEach((h, j) => {
+      if (!h) return;
+      if (h.includes('LOTE') || h.includes('LANC')) colLote = j;
+      else if (h.includes('HIST')) colHist = j;
+      else if (h.includes('DEB')) colDebito = j;
+      else if (h.includes('CRED')) colCredito = j;
+      else if (h.includes('SALDO')) colSaldo = j;
+    });
+    break;
+  }
+
+  // Fase 2 — extrair linhas de transação
   const out: LinhaRazao[] = [];
   let currentConta = '';
 
@@ -175,13 +197,15 @@ const processFixedLayoutRows = (matrix: any[][]): { rows: LinhaRazao[]; totalRaw
     if (!cols || cols.every(c => c == null || String(c).trim() === '')) continue;
     const col0 = String(cols[0] ?? '').trim().toUpperCase();
 
-    // Linha de definição de conta — col 2 contém o código reduzido que bate com balancete.codigo
     if (col0 === 'CONTA:') {
-      currentConta = String(cols[2] ?? '').trim();
+      // FRIGEL: "Conta:;;5;;..."      → col1="" → usa col2="5"
+      // PA:     "Conta:;10202;1.1...." → col1="10202" → usa col1
+      const c1 = String(cols[1] ?? '').trim();
+      const c2 = String(cols[2] ?? '').trim();
+      currentConta = c1 !== '' ? c1 : c2;
       continue;
     }
 
-    // Linhas de resumo/cabeçalho a ignorar
     const lineUpper = cols.map(c => String(c ?? '')).join(' ').toUpperCase();
     if (
       lineUpper.includes('SALDO ANTERIOR') ||
@@ -190,7 +214,7 @@ const processFixedLayoutRows = (matrix: any[][]): { rows: LinhaRazao[]; totalRaw
       lineUpper.includes('ENCERRAMENT') ||
       col0 === 'DATA' ||
       col0 === 'RAZ' ||
-      col0.startsWith('RAZ\xC3') || // RAZÃO com encoding
+      col0.startsWith('RAZ\xC3') ||
       col0 === 'EMPRESA:' ||
       col0 === 'C.N.P.J.:' ||
       col0.startsWith('PER') ||
@@ -199,15 +223,16 @@ const processFixedLayoutRows = (matrix: any[][]): { rows: LinhaRazao[]; totalRaw
       continue;
     }
 
-    // Linha de transação: col 0 deve ser data válida
     const data = parseDateCell(cols[0]);
     if (!isValidDate(data)) continue;
 
-    const lote = String(cols[4] ?? '').trim();
-    const historico = String(cols[10] ?? '').trim();
-    const debito = parseNumberBR(cols[22]);
-    const credito = parseNumberBR(cols[24]);
-    const saldoRaw = typeof cols[29] === 'string' ? cols[29].trim().replace(/[dDcC]$/, '') : cols[29];
+    const lote = String(cols[colLote] ?? '').trim();
+    const historico = String(cols[colHist] ?? '').trim();
+    const debito = parseNumberBR(cols[colDebito]);
+    const credito = parseNumberBR(cols[colCredito]);
+    const saldoRaw = typeof cols[colSaldo] === 'string'
+      ? cols[colSaldo].trim().replace(/[dDcC]$/, '')
+      : cols[colSaldo];
     const saldoExercicio = parseNumberBR(saldoRaw);
 
     out.push({ conta: currentConta, data: data as Date, lote, historico, debito, credito, saldoExercicio });
