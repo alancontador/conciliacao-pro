@@ -409,57 +409,60 @@ export function Status() {
     };
 
     const empresa = empresas.find((e) => e.id === selectedEmpresaId);
-
-    // Cabeçalho com informações da empresa
-    const header = [
-      ['ConciliaçãoPRO — Status das Contas'],
-      [empresa ? `Empresa: ${empresa.razaoSocial}` : '', empresa?.cnpj ? `CNPJ: ${empresa.cnpj}` : '', empresa?.periodo ? `Período: ${empresa.periodo}` : ''],
-      [`Gerado em: ${new Date().toLocaleString('pt-BR')}`],
-      [], // linha em branco
-      ['Conta', 'Descrição', 'Natureza', 'Contabilidade (R$)', 'Composição (R$)', 'Diferença (R$)', 'Status', 'Doc. Suporte'],
-    ];
-
-    const rows = filteredContas.map((conta) => [
-      conta.numero,
-      conta.descricao,
-      conta.natureza,
-      parseFloat(Number(conta.contabilidade).toFixed(2)),
-      parseFloat(Number(conta.composicao).toFixed(2)),
-      parseFloat(Number(conta.diferenca).toFixed(2)),
-      statusLabel[conta.status] ?? conta.status,
-      conta.documentos.length > 0 ? `Sim (${conta.documentos.length})` : 'Não',
-    ]);
-
-    const ws = XLSX.utils.aoa_to_sheet([...header, ...rows]);
-
-    // Largura das colunas
-    ws['!cols'] = [
-      { wch: 10 }, // Conta
-      { wch: 40 }, // Descrição
-      { wch: 10 }, // Natureza
-      { wch: 18 }, // Contabilidade
-      { wch: 16 }, // Composição
-      { wch: 14 }, // Diferença
-      { wch: 16 }, // Status
-      { wch: 12 }, // Doc. Suporte
-    ];
-
-    // Formato numérico com 2 casas decimais para colunas D, E, F (índice 3,4,5)
-    const dataStartRow = header.length + 1; // linha 1-based onde começa os dados
     const numFmt = '#,##0.00';
-    for (let r = dataStartRow; r <= dataStartRow + rows.length - 1; r++) {
-      ['D', 'E', 'F'].forEach((col) => {
-        const cell = ws[`${col}${r}`];
-        if (cell && typeof cell.v === 'number') {
-          cell.t = 'n';
-          cell.z = numFmt;
-        }
-      });
+
+    // Constrói o worksheet célula a célula para garantir tipos corretos
+    const ws: XLSX.WorkSheet = {};
+
+    const addCell = (r: number, c: number, value: string | number) => {
+      const ref = XLSX.utils.encode_cell({ r, c });
+      if (typeof value === 'number' && !isNaN(value)) {
+        ws[ref] = { t: 'n', v: value, z: numFmt };
+      } else {
+        ws[ref] = { t: 's', v: String(value ?? '') };
+      }
+    };
+
+    // Linhas de cabeçalho informativo (texto)
+    addCell(0, 0, 'ConciliaçãoPRO — Status das Contas');
+    if (empresa) {
+      addCell(1, 0, `Empresa: ${empresa.razaoSocial}`);
+      if (empresa.cnpj) addCell(1, 1, `CNPJ: ${empresa.cnpj}`);
+      if (empresa.periodo) addCell(1, 2, `Período: ${empresa.periodo}`);
     }
+    addCell(2, 0, `Gerado em: ${new Date().toLocaleString('pt-BR')}`);
+    // linha 3 em branco
+
+    // Linha de títulos das colunas (linha 4, índice 4)
+    const colTitles = ['Conta', 'Descrição', 'Natureza', 'Contabilidade (R$)', 'Composição (R$)', 'Diferença (R$)', 'Status', 'Doc. Suporte'];
+    colTitles.forEach((t, c) => addCell(4, c, t));
+
+    // Linhas de dados — numéricos como 'n', textos como 's'
+    filteredContas.forEach((conta, i) => {
+      const r = 5 + i;
+      addCell(r, 0, conta.numero);
+      addCell(r, 1, conta.descricao ?? '');
+      addCell(r, 2, conta.natureza ?? '');
+      addCell(r, 3, Number(conta.contabilidade) || 0);
+      addCell(r, 4, Number(conta.composicao) || 0);
+      addCell(r, 5, Number(conta.diferenca) || 0);
+      addCell(r, 6, statusLabel[conta.status] ?? conta.status);
+      addCell(r, 7, conta.documentos.length > 0 ? `Sim (${conta.documentos.length})` : 'Não');
+    });
+
+    // Define o intervalo total da planilha
+    ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 5 + filteredContas.length - 1, c: 7 } });
+
+    ws['!cols'] = [
+      { wch: 10 }, { wch: 40 }, { wch: 10 },
+      { wch: 18 }, { wch: 16 }, { wch: 14 },
+      { wch: 16 }, { wch: 12 },
+    ];
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Status das Contas');
-    XLSX.writeFile(wb, `status-contas-${empresa?.razaoSocial?.replace(/\s+/g, '-') ?? 'empresa'}-${new Date().toISOString().split('T')[0]}.xlsx`);
+    const nomeArquivo = `status-${empresa?.razaoSocial?.replace(/\s+/g, '-') ?? 'empresa'}-${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(wb, nomeArquivo);
 
     toast({ title: 'Exportação concluída', description: `${filteredContas.length} contas exportadas.` });
   };
