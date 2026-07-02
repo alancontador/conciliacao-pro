@@ -244,6 +244,15 @@ export function ImportBalancete() {
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
 
+      if (!sheet) {
+        toast({
+          title: 'Arquivo XLS não suportado',
+          description: 'Este arquivo XLS não pôde ser lido. Abra-o no Excel, salve como .xlsx e tente novamente.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
       const rawData: any[][] = XLSX.utils.sheet_to_json(sheet, {
         header: 1,
         defval: '',
@@ -269,6 +278,14 @@ export function ImportBalancete() {
         ignoredLines: dataLen - processedForPreview.length,
         errors: [],
       });
+
+      if (processedForPreview.length === 0) {
+        toast({
+          title: 'Nenhuma linha reconhecida',
+          description: 'O arquivo foi lido, mas nenhuma conta foi encontrada. Verifique se o formato está correto ou tente salvar como .xlsx.',
+          variant: 'destructive',
+        });
+      }
     } catch (error) {
       console.error('Error processing file:', error);
       toast({
@@ -291,6 +308,15 @@ export function ImportBalancete() {
       const workbook = XLSX.read(arrayBuffer, { type: 'array' });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
+
+      if (!sheet) {
+        toast({
+          title: 'Arquivo XLS não suportado',
+          description: 'Este arquivo XLS não pôde ser lido. Abra-o no Excel, salve como .xlsx e tente novamente.',
+          variant: 'destructive',
+        });
+        return;
+      }
 
       const rawData: any[][] = XLSX.utils.sheet_to_json(sheet, {
         header: 1,
