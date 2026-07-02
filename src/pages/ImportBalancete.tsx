@@ -5,11 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useAccountingStore } from '@/store/accounting';
-import { CheckCircle, FileSpreadsheet } from 'lucide-react';
+import { CheckCircle, FileSpreadsheet, Info } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import * as XLSX from 'xlsx';
+
+type FormatoBalancete = 'sem-cabecalho' | 'com-cabecalho';
 
 // ----------------- Helpers -----------------
 const norm = (v: unknown) => (v ?? '').toString().trim().replace(/\s+/g, ' ');
@@ -27,27 +30,40 @@ const normNum = (v: unknown): number => {
 // começa com 1 ou 2
 const startsWith1or2 = (s: string) => /^[12]/.test(s);
 
-// localiza a linha do cabeçalho da grade
+// Normaliza string para comparação robusta:
+// - remove espaços extras, converte para NFC (cobre NFD vindo do Excel), lowercase
+const nl = (v: any): string => norm(v).normalize('NFC').toLowerCase();
+
+// Detecta a linha de títulos das colunas do balancete.
+// Tolerante a variações de acento, espaço e rótulos abreviados.
 function findHeaderIndex(rows: any[][]): number {
-  const isHeader = (r: any[]) => {
-    const a = norm(r[0]).toLowerCase();
-    const b = norm(r[1]).toLowerCase();
-    const c = norm(r[2]).toLowerCase();
-    const d = norm(r[3]).toLowerCase();
-    const e = norm(r[4]).toLowerCase();
-    const f = norm(r[5]).toLowerCase();
-    const g = norm(r[6]).toLowerCase();
+  return rows.findIndex(r => {
+    if (!Array.isArray(r) || r.length < 6) return false;
+    const a = nl(r[0]);
+    const b = nl(r[1]);
+    const c = nl(r[2]);
+    const d = nl(r[3]);
+    const e = nl(r[4]);
+    const f = nl(r[5]);
+    const g = nl(r[6] ?? '');
     return (
-      (a === 'código' || a === 'codigo') &&
-      (b === 'classificação' || b === 'classificacao') &&
-      c.startsWith('descrição conta') &&
-      d.startsWith('saldo anterior') &&
-      (e === 'débito' || e === 'debito') &&
-      (f === 'crédito' || f === 'credito') &&
-      g.startsWith('saldo atual')
+      (a === 'código' || a === 'codigo' || a === 'cod.' || a === 'cod') &&
+      (b.includes('classif')) &&
+      (c.includes('descri')) &&
+      (d.includes('saldo') && (d.includes('ant') || d.includes('anter'))) &&
+      (e.includes('déb') || e.includes('deb') || e === 'd') &&
+      (f.includes('créd') || f.includes('cred') || f === 'c') &&
+      (g.includes('saldo') || g.includes('sd'))
     );
-  };
-  return rows.findIndex(isHeader);
+  });
+}
+
+// Detecta se o arquivo tem um bloco de informações (empresa/CNPJ/período) antes dos dados.
+function hasInfoBlock(rows: any[][]): boolean {
+  if (!rows.length) return false;
+  const a0 = nl(rows[0]?.[0] ?? '');
+  return a0.startsWith('empresa') || a0.startsWith('razão') || a0.startsWith('razao')
+    || a0.startsWith('cnpj') || a0.startsWith('periodo') || a0.startsWith('período');
 }
 
 type Linha = {
@@ -64,8 +80,19 @@ type Linha = {
 type LinhaPreview = Linha & { id: number };
 
 // extrai linhas do layout (A,B,C,D,E,F,G) após o cabeçalho
-function extractRowsFromLayout(raw: any[][], minChars: number, withIds = false) {
-  const hdr = findHeaderIndex(raw);
+// formato: 'sem-cabecalho' = arquivo começa direto nos dados (header na 1ª linha)
+//          'com-cabecalho' = arquivo tem bloco empresa/CNPJ/período antes dos dados
+function extractRowsFromLayout(
+  raw: any[][],
+  minChars: number,
+  withIds = false,
+  formato: FormatoBalancete = 'sem-cabecalho',
+) {
+  let hdr = findHeaderIndex(raw);
+
+  // Se não encontrou (hdr === -1) e o modo é sem-cabecalho, assume linha 0 como cabeçalho.
+  // Isso cobre arquivos cujas colunas têm rótulos ligeiramente diferentes dos esperados.
+  if (hdr === -1 && formato === 'sem-cabecalho') hdr = 0;
   if (hdr === -1) return [];
 
   const data = raw.slice(hdr + 1);
@@ -126,6 +153,7 @@ export function ImportBalancete() {
   const [isLoading, setIsLoading] = useState(false);
   const [previewData, setPreviewData] = useState<LinhaPreview[]>([]);
   const [minCharacters, setMinCharacters] = useState(1);
+  const [formato, setFormato] = useState<FormatoBalancete>('sem-cabecalho');
   const rawDataRef = useRef<any[][] | null>(null);
   const [importStats, setImportStats] = useState<{
     totalLines: number;
@@ -139,10 +167,10 @@ export function ImportBalancete() {
   const [pageSize, setPageSize] = useState(10);
   useEffect(() => { setCurrentPage(1); }, [previewData, pageSize]);
 
-  // Refiltra o preview quando o usuário muda minCharacters sem re-fazer upload
+  // Refiltra o preview quando o usuário muda minCharacters ou formato sem re-fazer upload
   useEffect(() => {
     if (!rawDataRef.current) return;
-    const processed = extractRowsFromLayout(rawDataRef.current, minCharacters, true);
+    const processed = extractRowsFromLayout(rawDataRef.current, minCharacters, true, formato);
     setPreviewData(processed);
     const hdrIdx = findHeaderIndex(rawDataRef.current);
     const dataLen = hdrIdx === -1 ? 0 : Math.max(rawDataRef.current.length - (hdrIdx + 1), 0);
@@ -152,7 +180,7 @@ export function ImportBalancete() {
       ignoredLines: dataLen - processed.length,
       errors: [],
     });
-  }, [minCharacters]);
+  }, [minCharacters, formato]);
 
   const totalPages = Math.max(1, Math.ceil(previewData.length / pageSize));
   const startIdx = (currentPage - 1) * pageSize;
@@ -187,7 +215,12 @@ export function ImportBalancete() {
 
       rawDataRef.current = rawData;
 
-      const processedForPreview = extractRowsFromLayout(rawData, minCharacters, true);
+      // Auto-detecta formato se o arquivo indicar a presença do bloco de cabeçalho
+      if (hasInfoBlock(rawData) && formato === 'sem-cabecalho') {
+        setFormato('com-cabecalho');
+      }
+
+      const processedForPreview = extractRowsFromLayout(rawData, minCharacters, true, formato);
 
       setPreviewData(processedForPreview);
 
@@ -228,7 +261,7 @@ export function ImportBalancete() {
         raw: true,
       });
 
-      const processedData = extractRowsFromLayout(rawData, minCharacters, false);
+      const processedData = extractRowsFromLayout(rawData, minCharacters, false, formato);
 
       setBalanceteData(processedData);
 
@@ -287,7 +320,52 @@ export function ImportBalancete() {
           <CardTitle>Configurações de Importação</CardTitle>
           <CardDescription>Configure os parâmetros para filtrar e processar os dados</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-6">
+          {/* Formato do balancete */}
+          <div className="space-y-3">
+            <Label className="text-sm font-medium">Formato do balancete</Label>
+            <RadioGroup
+              value={formato}
+              onValueChange={(v) => setFormato(v as FormatoBalancete)}
+              className="space-y-2"
+            >
+              <label
+                htmlFor="fmt-sem"
+                className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+                  formato === 'sem-cabecalho' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
+                }`}
+              >
+                <RadioGroupItem value="sem-cabecalho" id="fmt-sem" className="mt-0.5" />
+                <div>
+                  <p className="font-medium text-sm">Sem bloco de cabeçalho</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    O arquivo começa diretamente com os títulos das colunas (Código, Classificação, Descrição…)
+                  </p>
+                </div>
+              </label>
+
+              <label
+                htmlFor="fmt-com"
+                className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+                  formato === 'com-cabecalho' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
+                }`}
+              >
+                <RadioGroupItem value="com-cabecalho" id="fmt-com" className="mt-0.5" />
+                <div>
+                  <p className="font-medium text-sm">Com bloco de cabeçalho</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    O arquivo começa com empresa, CNPJ, período e data de emissão antes da tabela de dados
+                  </p>
+                </div>
+              </label>
+            </RadioGroup>
+            <div className="flex items-start gap-2 text-xs text-muted-foreground">
+              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>O sistema também detecta o formato automaticamente ao carregar o arquivo.</span>
+            </div>
+          </div>
+
+          {/* Filtro de dígitos */}
           <div>
             <Label htmlFor="minChars">Número mínimo de caracteres para filtro</Label>
             <Input
