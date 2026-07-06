@@ -11,7 +11,9 @@ declare global {
 const url = window.__env?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL || '';
 const key = window.__env?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-export const supabase = createClient(url || 'https://placeholder.supabase.co', key || 'placeholder');
+export const supabase = createClient(url || 'https://placeholder.supabase.co', key || 'placeholder', {
+  auth: { flowType: 'pkce' },
+});
 
 // ── Tipos das tabelas ──────────────────────────────────────────────────────────
 

@@ -20,30 +20,43 @@ export function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
 
-  // Supabase coloca os tokens de recovery no hash da URL
   useEffect(() => {
-    supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setReady(true);
-      } else if (event === 'SIGNED_IN') {
-        // já tem sessão válida para trocar a senha
+    // Verifica erro no hash (otp_expired, access_denied etc.)
+    const hashParams = new URLSearchParams(window.location.hash.slice(1));
+    if (hashParams.get('error')) {
+      setInvalid(true);
+      return;
+    }
+
+    // Fluxo PKCE: código chega como query param ?code=...
+    const queryParams = new URLSearchParams(window.location.search);
+    const code = queryParams.get('code');
+    if (code) {
+      supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
+        if (error) setInvalid(true);
+        else setReady(true);
+      });
+      return;
+    }
+
+    // Fallback: fluxo implícito legado (hash com access_token)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') {
         setReady(true);
       }
     });
 
-    // Verifica se já tem sessão de recovery ativa
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) setReady(true);
-      else {
-        // Aguarda um pouco para o hash ser processado
-        setTimeout(() => {
-          supabase.auth.getSession().then(({ data }) => {
-            if (!data.session) setInvalid(true);
-            else setReady(true);
-          });
-        }, 800);
-      }
+      if (session) { setReady(true); return; }
+      setTimeout(() => {
+        supabase.auth.getSession().then(({ data }) => {
+          if (!data.session) setInvalid(true);
+          else setReady(true);
+        });
+      }, 800);
     });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
