@@ -188,6 +188,7 @@ export function Dashboard() {
           value={kpis.totalContas}
           icon={FileText}
           description="Para conciliar"
+          to="/status"
         />
         <KPICard
           title="Conciliadas"
@@ -195,6 +196,7 @@ export function Dashboard() {
           icon={CheckCircle}
           variant="success"
           description="Já conciliadas"
+          to="/status?status=CONCILIADO"
         />
         <KPICard
           title="Pendentes"
@@ -202,6 +204,7 @@ export function Dashboard() {
           icon={AlertCircle}
           variant="destructive"
           description="Aguardando"
+          to="/status?status=NAO_CONCILIADO"
         />
         <KPICard
           title="Em Análise"
@@ -209,6 +212,7 @@ export function Dashboard() {
           icon={TrendingUp}
           variant="warning"
           description="Em andamento"
+          to="/status?status=EM_ANALISE"
         />
         <KPICard
           title="Em Alerta"
@@ -216,6 +220,7 @@ export function Dashboard() {
           icon={AlertCircle}
           variant={kpis.contasAlerta > 0 ? 'destructive' : 'default'}
           description="Prazos vencidos"
+          to="/status"
         />
 
         {/* Prazo Médio — editável inline */}

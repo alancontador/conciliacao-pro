@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { LucideIcon } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
 interface KPICardProps {
@@ -9,15 +10,17 @@ interface KPICardProps {
   icon: LucideIcon;
   trend?: 'up' | 'down' | 'neutral';
   variant?: 'default' | 'success' | 'warning' | 'destructive';
+  to?: string;
 }
 
-export function KPICard({ 
-  title, 
-  value, 
-  description, 
-  icon: Icon, 
+export function KPICard({
+  title,
+  value,
+  description,
+  icon: Icon,
   trend = 'neutral',
-  variant = 'default' 
+  variant = 'default',
+  to,
 }: KPICardProps) {
   const getVariantStyles = () => {
     switch (variant) {
@@ -45,8 +48,8 @@ export function KPICard({
     }
   };
 
-  return (
-    <Card className={cn("transition-all hover:shadow-md", getVariantStyles())}>
+  const card = (
+    <Card className={cn("transition-all hover:shadow-md", to && "cursor-pointer hover:ring-2 hover:ring-primary/30", getVariantStyles())}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">
           {title}
@@ -63,4 +66,6 @@ export function KPICard({
       </CardContent>
     </Card>
   );
+
+  return to ? <Link to={to} className="block">{card}</Link> : card;
 }

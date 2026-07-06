@@ -47,12 +47,19 @@ const excelSerialToDate = (n: number): Date => {
 const isValidDate = (d: Date | null) => !!d && !isNaN(d.getTime());
 const parseDateCell = (v: any): Date | null => {
   if (v == null || v === '') return null;
-  if (v instanceof Date && !isNaN(v.getTime())) return v;
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    // Use UTC components to avoid UTC-3 off-by-one when Date was created at UTC midnight
+    return new Date(v.getUTCFullYear(), v.getUTCMonth(), v.getUTCDate());
+  }
   if (typeof v === 'number') { const d = excelSerialToDate(v); return isValidDate(d) ? d : null; }
   const s = v.toString().trim();
+  // dd/mm/yyyy (BR format)
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (m) { const dd=+m[1], mm=+m[2]-1, yy=+m[3]; const yyyy = yy<100?yy+2000:yy; const d=new Date(yyyy,mm,dd); return isValidDate(d)?d:null; }
-  const d = new Date(s); return isValidDate(d)?d:null;
+  // yyyy-mm-dd (ISO format) — parse as local midnight to avoid UTC-3 D-1 shift
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return new Date(+iso[1], +iso[2]-1, +iso[3]);
+  return null;
 };
 // Layout limpo: row 0 é cabeçalho com CONTA|DATA|...|DEBITO|CREDITO sem linhas "Conta:"
 // Datas armazenadas como serial Excel (ex: 46022 = 31/12/2025) — parseDateCell já trata números

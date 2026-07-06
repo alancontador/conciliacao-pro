@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAccountingStore } from '@/store/accounting';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -41,8 +42,9 @@ import type { ReconciliationCandidate } from '@/lib/reconciliation/types';
 
 export function Status() {
   const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, updateConta, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions, logConciliacaoAuditoria, resetEmpresaData, currentUser, empresas, selectedEmpresaId } = useAccountingStore();
+  const [searchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') ?? 'all');
   const [naturezaFilter, setNaturezaFilter] = useState<string>('all');
   const [selectedConta, setSelectedConta] = useState<Conta | null>(null);
   const [selectedGlobalIndices, setSelectedGlobalIndices] = useState<Set<number>>(new Set());
@@ -84,6 +86,20 @@ export function Status() {
     }
     return map;
   }, [allMovsWithIdx, reconciledSet, selectedConta]);
+
+  // Saldo corrido para a aba "Conciliados" (inclui todos os lançamentos)
+  const recalculatedSaldoFull = useMemo(() => {
+    const map = new Map<number, number>();
+    if (!selectedConta) return map;
+    let saldo = 0;
+    for (const mov of allMovsWithIdx) {
+      saldo += selectedConta.natureza === 'ATIVO'
+        ? mov.debito - mov.credito
+        : mov.credito - mov.debito;
+      map.set(mov.globalIdx, saldo);
+    }
+    return map;
+  }, [allMovsWithIdx, selectedConta]);
 
   // Filtra pendentes ou conciliados conforme a aba ativa
   const visibleMovs = useMemo(() =>
@@ -270,7 +286,9 @@ export function Status() {
   const processedContas = useMemo(() => {
     if (balanceteData.length === 0) return contas;
 
-    return balanceteData.map(balancete => {
+    return balanceteData
+      .filter(balancete => Math.abs(balancete.saldoAtual) >= 0.01)
+      .map(balancete => {
       const stored = contas.find(c => c.numero === balancete.codigo);
 
       let saldoPendente = 0;
@@ -905,7 +923,12 @@ export function Status() {
                                 {mov.credito > 0 ? `R$ ${mov.credito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
                               </TableCell>
                               <TableCell className="text-right font-mono">
-                                R$ {(recalculatedSaldoByIdx.get(mov.globalIdx) ?? mov.saldoExercicio).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                {(() => {
+                                  const saldo = showReconciled
+                                    ? (recalculatedSaldoFull.get(mov.globalIdx) ?? mov.saldoExercicio)
+                                    : (recalculatedSaldoByIdx.get(mov.globalIdx) ?? mov.saldoExercicio);
+                                  return `R$ ${saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+                                })()}
                               </TableCell>
                               <TableCell>
                                 {mov.isManual && (
