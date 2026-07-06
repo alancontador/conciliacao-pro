@@ -6,6 +6,7 @@ import type { Empresa } from '@/types/empresa';
 import * as svc from '@/services/supabase.service';
 import { supabase } from '@/lib/supabase';
 import type { MatchReasons } from '@/lib/reconciliation/types';
+import { logger } from '@/lib/logger';
 
 // ── Dados por empresa (cache local) ──────────────────────────────────────────
 
@@ -210,7 +211,8 @@ export const useAccountingStore = create<AccountingState>()(
           if (empresaParaCarregar) {
             await get().selectEmpresa(empresaParaCarregar);
           }
-        } catch {
+        } catch (error) {
+          logger.fatal('store/load-tenant-data-failed', { error });
           set({ isInitialized: true });
         }
       },
@@ -258,9 +260,14 @@ export const useAccountingStore = create<AccountingState>()(
 
       setContas: (contas) => {
         set((state) => sync(state, { contas }));
-        const { tenantId, selectedEmpresaId } = get();
+        const { tenantId, selectedEmpresaId, currentUser } = get();
         if (tenantId && selectedEmpresaId) {
-          svc.upsertContas(tenantId, selectedEmpresaId, get().contas).catch(console.error);
+          svc.upsertContas(tenantId, selectedEmpresaId, get().contas).catch((error) => {
+            logger.error('store/sync-contas-failed', {
+              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'upsertContas' },
+              error,
+            });
+          });
         }
       },
 
@@ -271,49 +278,79 @@ export const useAccountingStore = create<AccountingState>()(
           );
           return sync(state, { contas });
         });
-        const { tenantId, selectedEmpresaId } = get();
+        const { tenantId, selectedEmpresaId, currentUser } = get();
         if (tenantId && selectedEmpresaId && updates.status) {
-          svc.updateContaStatus(selectedEmpresaId, numero, updates.status).catch(console.error);
+          svc.updateContaStatus(selectedEmpresaId, numero, updates.status).catch((error) => {
+            logger.error('store/sync-conta-status-failed', {
+              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'updateContaStatus', data: { numero } },
+              error,
+            });
+          });
         }
       },
 
       setBalanceteData: (balanceteData) => {
         set((state) => sync(state, { balanceteData }));
-        const { tenantId, selectedEmpresaId } = get();
+        const { tenantId, selectedEmpresaId, currentUser } = get();
         if (tenantId && selectedEmpresaId) {
-          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { balanceteData }).catch(console.error);
+          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { balanceteData }).catch((error) => {
+            logger.error('store/sync-balancete-failed', {
+              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'upsertBalanceteData' },
+              error,
+            });
+          });
         }
       },
 
       setRazaoData: (razaoData) => {
         set((state) => sync(state, { razaoData }));
-        const { tenantId, selectedEmpresaId } = get();
+        const { tenantId, selectedEmpresaId, currentUser } = get();
         if (tenantId && selectedEmpresaId) {
-          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { razaoData }).catch(console.error);
+          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { razaoData }).catch((error) => {
+            logger.error('store/sync-razao-failed', {
+              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'upsertRazaoData' },
+              error,
+            });
+          });
         }
       },
 
       addImportHistory: (history) => {
         set((state) => sync(state, { importHistory: [history, ...state.importHistory] }));
-        const { tenantId, selectedEmpresaId } = get();
+        const { tenantId, selectedEmpresaId, currentUser } = get();
         if (tenantId && selectedEmpresaId) {
-          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { importHistory: get().importHistory }).catch(console.error);
+          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { importHistory: get().importHistory }).catch((error) => {
+            logger.error('store/sync-import-history-add-failed', {
+              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'addImportHistory' },
+              error,
+            });
+          });
         }
       },
 
       removeImportHistory: (id) => {
         set((state) => sync(state, { importHistory: state.importHistory.filter((h) => h.id !== id) }));
-        const { tenantId, selectedEmpresaId } = get();
+        const { tenantId, selectedEmpresaId, currentUser } = get();
         if (tenantId && selectedEmpresaId) {
-          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { importHistory: get().importHistory }).catch(console.error);
+          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { importHistory: get().importHistory }).catch((error) => {
+            logger.error('store/sync-import-history-remove-failed', {
+              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'removeImportHistory' },
+              error,
+            });
+          });
         }
       },
 
       clearImportHistory: () => {
         set((state) => sync(state, { importHistory: [] }));
-        const { tenantId, selectedEmpresaId } = get();
+        const { tenantId, selectedEmpresaId, currentUser } = get();
         if (tenantId && selectedEmpresaId) {
-          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { importHistory: [] }).catch(console.error);
+          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { importHistory: [] }).catch((error) => {
+            logger.error('store/sync-import-history-clear-failed', {
+              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'clearImportHistory' },
+              error,
+            });
+          });
         }
       },
 
@@ -325,7 +362,12 @@ export const useAccountingStore = create<AccountingState>()(
           Promise.all([
             svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { balanceteData: [], razaoData: [], importHistory: [] }),
             svc.upsertContas(tenantId, selectedEmpresaId, []),
-          ]).catch(console.error);
+          ]).catch((error) => {
+            logger.error('store/sync-reset-empresa-failed', {
+              context: { tenantId, empresaId: selectedEmpresaId, userId: get().currentUser?.id, action: 'resetEmpresaData' },
+              error,
+            });
+          });
         }
       },
 
@@ -336,9 +378,14 @@ export const useAccountingStore = create<AccountingState>()(
           );
           return sync(state, { contas });
         });
-        const { tenantId, selectedEmpresaId } = get();
+        const { tenantId, selectedEmpresaId, currentUser } = get();
         if (tenantId && selectedEmpresaId) {
-          svc.updateContaStatus(selectedEmpresaId, numero, status).catch(console.error);
+          svc.updateContaStatus(selectedEmpresaId, numero, status).catch((error) => {
+            logger.error('store/sync-reconcile-account-failed', {
+              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'reconcileAccount', data: { numero, status } },
+              error,
+            });
+          });
         }
       },
 
@@ -380,7 +427,10 @@ export const useAccountingStore = create<AccountingState>()(
             usuarioId: currentUser.id,
           });
         } catch (error) {
-          console.error(error);
+          logger.error('store/log-conciliacao-auditoria-failed', {
+            context: { tenantId: get().tenantId ?? undefined, empresaId: selectedEmpresaId ?? undefined, userId: currentUser.id, action: 'logConciliacaoAuditoria' },
+            error,
+          });
         }
       },
 
@@ -513,8 +563,11 @@ export const useAccountingStore = create<AccountingState>()(
             reconciledRazaoIndices: (dbDados?.reconciled_indices as number[]) ?? [],
             importHistory: (dbDados?.import_history as ImportHistory[]) ?? [],
           });
-        } catch {
-          // Fallback para cache local
+        } catch (error) {
+          logger.warn('store/select-empresa-supabase-failed-using-cache', {
+            context: { empresaId: id, userId: get().currentUser?.id, action: 'selectEmpresa' },
+            error,
+          });
           const cached = get().dadosPorEmpresa[id] ?? emptyDados;
           set({ companyInfo, ...cached });
         }

@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useAccountingStore } from '@/store/accounting';
+import { logger } from '@/lib/logger';
 import { CheckCircle, FileSpreadsheet, Info } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import * as XLSX from 'xlsx';
@@ -228,8 +229,9 @@ export function ImportBalancete() {
     [previewData, startIdx, endIdx]
   );
 
-  const { setBalanceteData, addImportHistory } = useAccountingStore();
+  const { setBalanceteData, addImportHistory, currentUser, selectedEmpresaId } = useAccountingStore();
   const { toast } = useToast();
+  const log = logger.withContext({ userId: currentUser?.id, empresaId: selectedEmpresaId ?? undefined, action: 'import-balancete' });
 
   const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile);
@@ -287,7 +289,7 @@ export function ImportBalancete() {
         });
       }
     } catch (error) {
-      console.error('Error processing file:', error);
+      log.error('file-parse-failed', { error, data: { fileName: file?.name } });
       toast({
         title: 'Erro ao processar arquivo',
         description: 'Verifique se o arquivo está no formato correto.',
@@ -349,7 +351,7 @@ export function ImportBalancete() {
       setPreviewData([]);
       setImportStats(null);
     } catch (error) {
-      console.error('Error importing data:', error);
+      log.error('import-failed', { error, data: { fileName: file?.name } });
       toast({
         title: 'Erro na importação',
         description: 'Não foi possível importar os dados. Tente novamente.',

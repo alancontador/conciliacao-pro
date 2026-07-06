@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useAccountingStore } from '@/store/accounting';
+import { logger } from '@/lib/logger';
 import { CheckCircle, FileSpreadsheet } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import * as XLSX from 'xlsx';
@@ -329,8 +330,9 @@ export function ImportRazao() {
   const endIdx = Math.min(startIdx + pageSize, previewData.length);
   const pageRows = useMemo(() => previewData.slice(startIdx, endIdx), [previewData, startIdx, endIdx]);
 
-  const { setRazaoData, addImportHistory } = useAccountingStore();
+  const { setRazaoData, addImportHistory, currentUser, selectedEmpresaId } = useAccountingStore();
   const { toast } = useToast();
+  const log = logger.withContext({ userId: currentUser?.id, empresaId: selectedEmpresaId ?? undefined, action: 'import-razao' });
 
   const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile);
@@ -359,7 +361,7 @@ export function ImportRazao() {
         errors: [],
       });
     } catch (e) {
-      console.error(e);
+      log.error('file-parse-failed', { error: e, data: { fileName: selectedFile?.name } });
       toast({ title: 'Erro ao processar arquivo', description: 'Cheque o layout e tente novamente.', variant: 'destructive' });
     } finally {
       setIsLoading(false);
@@ -399,7 +401,7 @@ export function ImportRazao() {
       toast({ title: 'Importação realizada com sucesso!', description: `${rows.length} movimentações foram importadas do razão.` });
       setFile(null); setPreviewData([]); setImportStats(null);
     } catch (e) {
-      console.error(e);
+      log.error('import-failed', { error: e, data: { fileName: file?.name } });
       toast({ title: 'Erro na importação', description: 'Não foi possível importar os dados.', variant: 'destructive' });
     } finally {
       setIsLoading(false);

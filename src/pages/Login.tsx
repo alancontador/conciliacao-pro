@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Building2, Lock, Mail, Eye, EyeOff, UserPlus, KeyRound, Phone } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { logger } from '@/lib/logger';
 
 const formatCnpj = (v: string): string => {
   const d = v.replace(/\D/g, '').slice(0, 14);
@@ -100,6 +101,7 @@ export function Login() {
       toast({ title: 'Escritório criado! Bem-vindo ao ConciliaçãoPRO.' });
       navigate('/', { replace: true });
     } catch (err: unknown) {
+      logger.error('auth/signup-failed', { error: err, context: { action: 'signUpTenant' } });
       const msg = err instanceof Error ? err.message : 'Erro ao criar conta';
       toast({ title: msg, variant: 'destructive' });
     } finally {
@@ -115,7 +117,8 @@ export function Login() {
       await requestPasswordReset(resetEmail.trim());
       toast({ title: 'E-mail de recuperação enviado!', description: 'Verifique sua caixa de entrada.' });
       setTab('login');
-    } catch {
+    } catch (err) {
+      logger.warn('auth/password-reset-failed', { error: err, context: { action: 'requestPasswordReset' } });
       toast({ title: 'E-mail não encontrado', variant: 'destructive' });
     } finally {
       setLoading(false);

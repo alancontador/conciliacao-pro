@@ -13,6 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { UserPlus, Pencil, Trash2, Search, ShieldCheck, ShieldX, KeyRound } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { logger } from '@/lib/logger';
 import type { Usuario, UsuarioRole } from '@/types/usuario';
 import { ROLE_LABELS, PERMISSAO_LABELS, DEFAULT_PERMISSOES } from '@/types/usuario';
 
@@ -127,6 +128,10 @@ export function Usuarios() {
         toast({ title: 'Convite criado e e-mail preparado', description: `Um link de acesso será enviado para ${form.email.trim()}` });
       }
     } catch (err: unknown) {
+      logger.error('usuarios/save-failed', {
+        context: { userId: currentUser?.id, action: dialogMode === 'create' ? 'addUsuario' : 'updateUsuario' },
+        error: err,
+      });
       toast({ title: err instanceof Error ? err.message : 'Erro ao salvar', variant: 'destructive' });
     } finally {
       setSaving(false);
@@ -155,7 +160,11 @@ export function Usuarios() {
     try {
       await requestPasswordReset_user(u.email);
       toast({ title: 'E-mail de recuperação enviado', description: `Link enviado para ${u.email}` });
-    } catch {
+    } catch (err) {
+      logger.warn('usuarios/password-reset-failed', {
+        context: { userId: currentUser?.id, action: 'requestPasswordReset_user' },
+        error: err,
+      });
       toast({ title: 'Erro ao enviar e-mail', variant: 'destructive' });
     }
   };
