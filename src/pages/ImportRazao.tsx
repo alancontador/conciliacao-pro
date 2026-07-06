@@ -39,7 +39,11 @@ const parseNumberBR = (v: any): number => {
   const n = Number(s.replace(',', '.'));
   return Number.isFinite(n) ? n : 0;
 };
-const excelSerialToDate = (n: number): Date => new Date((n - 25569) * 86400 * 1000);
+// Serial Excel → data local (evita offset de UTC-3: midnight UTC = dia anterior no Brasil)
+const excelSerialToDate = (n: number): Date => {
+  const utc = new Date((n - 25569) * 86400 * 1000);
+  return new Date(utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
+};
 const isValidDate = (d: Date | null) => !!d && !isNaN(d.getTime());
 const parseDateCell = (v: any): Date | null => {
   if (v == null || v === '') return null;
@@ -50,24 +54,40 @@ const parseDateCell = (v: any): Date | null => {
   if (m) { const dd=+m[1], mm=+m[2]-1, yy=+m[3]; const yyyy = yy<100?yy+2000:yy; const d=new Date(yyyy,mm,dd); return isValidDate(d)?d:null; }
   const d = new Date(s); return isValidDate(d)?d:null;
 };
-// Formato M/D/YY usado no layout "limpo" exportado em padrão americano
-const parseDateUS = (v: any): Date | null => {
-  if (v == null || v === '') return null;
-  if (v instanceof Date && !isNaN(v.getTime())) return v;
-  if (typeof v === 'number') { const d = excelSerialToDate(v); return isValidDate(d) ? d : null; }
-  const s = v.toString().trim();
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-  if (m) { const mo=+m[1]-1, dd=+m[2], yy=+m[3]; const yyyy=yy<100?yy+2000:yy; const d=new Date(yyyy,mo,dd); return isValidDate(d)?d:null; }
-  return null;
+// Layout limpo: row 0 é cabeçalho com CONTA|DATA|...|DEBITO|CREDITO sem linhas "Conta:"
+// Datas armazenadas como serial Excel (ex: 46022 = 31/12/2025) — parseDateCell já trata números
+const isCleanFlatLayout = (matrix: any[][]): boolean => {
+  const h = (matrix[0] || []).map(normalize);
+  return h.some(v => v === 'CONTA') && h.some(v => v === 'DATA') &&
+         h.some(v => v.includes('DEBITO')) && h.some(v => v.includes('CREDITO'));
 };
-// Detecta se a coluna de data usa M/D/YY: basta encontrar uma linha onde a parte do meio > 12
-const detectUSDateFormat = (col: number, rows: any[][], maxCheck = 40): boolean => {
-  for (const row of rows.slice(0, maxCheck)) {
-    const v = row[col]; if (!v) continue;
-    const m = v.toString().trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-    if (m && +m[2] > 12) return true;
+
+const processCleanLayout = (matrix: any[][]): { rows: LinhaRazao[]; totalRaw: number } => {
+  const h = (matrix[0] || []).map(normalize);
+  const iConta = h.findIndex(v => v === 'CONTA');
+  const iData  = h.findIndex(v => v === 'DATA');
+  const iLote  = h.findIndex(v => v.includes('LOTE'));
+  const iHist  = h.findIndex(v => v.includes('HIST'));
+  const iDeb   = h.findIndex(v => v.includes('DEBITO'));
+  const iCred  = h.findIndex(v => v.includes('CREDITO'));
+
+  const out: LinhaRazao[] = [];
+  for (const row of matrix.slice(1)) {
+    if (!row || row.every((c: any) => c == null || String(c).trim() === '')) continue;
+    const data = parseDateCell(iData >= 0 ? row[iData] : null);
+    if (!isValidDate(data)) continue;
+    out.push({
+      conta:          iConta >= 0 ? String(row[iConta] ?? '').trim() : '',
+      data:           data as Date,
+      lote:           iLote >= 0  ? String(row[iLote]  ?? '').trim() : '',
+      historico:      iHist >= 0  ? String(row[iHist]  ?? '').trim() : '',
+      debito:         iDeb  >= 0  ? parseNumberBR(row[iDeb])  : 0,
+      credito:        iCred >= 0  ? parseNumberBR(row[iCred]) : 0,
+      saldoExercicio: 0,
+    });
   }
-  return false;
+  out.forEach((r, i) => { r.id = i; });
+  return { rows: out, totalRaw: matrix.length };
 };
 const rowEmpty = (row: any[]) => !row || row.every(c => c == null || String(c).trim() === '');
 
@@ -272,9 +292,10 @@ const processCSV = (text: string): { rows: LinhaRazao[]; totalRaw: number } => {
 const processWorkbook = (raw: any[][]) => {
   if (!raw.length) return { rows: [] as LinhaRazao[], totalRaw: 0 };
 
-  // Tenta primeiro o layout fixo (mesmo do parser de .csv): muitas planilhas Excel são o
-  // mesmo relatório do razão exportado com as mesmas colunas na mesma ordem. Só cai para a
-  // detecção inteligente por cabeçalho abaixo se o layout fixo não achar nenhuma linha válida.
+  // Layout limpo (Conta|Data|Lote|Filial|Histórico|Débito|Crédito na row 0)
+  if (isCleanFlatLayout(raw)) return processCleanLayout(raw);
+
+  // Layout fixo Domínio (linhas "Conta:" + data em col 0): mesmo do parser CSV
   const fixedLayout = processFixedLayoutRows(raw);
   if (fixedLayout.rows.length > 0) return fixedLayout;
 
@@ -285,11 +306,6 @@ const processWorkbook = (raw: any[][]) => {
 
   const idx = mapColumnsSmart(header, body.slice(0, 50));
 
-  // Detecta se a coluna DATA usa formato americano M/D/YY (ex: "12/31/25")
-  const parseDate = (idx.DATA != null && detectUSDateFormat(idx.DATA, body, 40))
-    ? parseDateUS
-    : parseDateCell;
-
   const out: LinhaRazao[] = [];
   for (const row of body) {
     if (rowEmpty(row)) continue;
@@ -297,13 +313,13 @@ const processWorkbook = (raw: any[][]) => {
 
     const vData = idx.DATA != null ? row[idx.DATA] : undefined;
     if (idx.DATA != null) {
-      const d = parseDate(vData);
+      const d = parseDateCell(vData);
       if (!isValidDate(d)) continue;
     }
 
     const r: LinhaRazao = {
       conta: idx.CONTA!=null ? String(row[idx.CONTA] ?? '').trim() : '',
-      data:  idx.DATA !=null ? parseDate(vData) : null,
+      data:  idx.DATA !=null ? parseDateCell(vData) : null,
       lote:  idx.LOTE !=null ? String(row[idx.LOTE] ?? '').trim() : '',
       historico: idx.HISTORICO!=null ? String(row[idx.HISTORICO] ?? '').trim() : '',
       debito: idx.DEBITO!=null ? parseNumberBR(row[idx.DEBITO]) : 0,
