@@ -29,6 +29,7 @@ export interface DbProfile {
   id: string;
   tenant_id: string;
   nome: string;
+  email: string | null;
   role: string;
   status: string;
   permissoes: Record<string, boolean>;

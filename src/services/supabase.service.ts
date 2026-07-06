@@ -100,6 +100,9 @@ export async function createTenantAndAdmin(params: {
   );
   if (rpcError) throw new Error('Erro ao configurar escritório: ' + rpcError.message);
 
+  // Salva email no profile do admin (a RPC não recebe o email)
+  await supabase.from('profiles').update({ email: params.email }).eq('id', userId);
+
   return { userId, tenantId: (rpcData as { tenant_id: string }).tenant_id };
 }
 
@@ -191,6 +194,7 @@ export async function aceitarConvite(token: string, nome: string, password: stri
     id: authData.user.id,
     tenant_id: convite.tenant_id,
     nome,
+    email: convite.email,
     role: convite.role,
     status: 'ativo',
     permissoes: convite.permissoes,

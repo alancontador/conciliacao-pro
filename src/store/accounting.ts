@@ -188,18 +188,16 @@ export const useAccountingStore = create<AccountingState>()(
             updatedAt: new Date(e.atualizado_em),
           }));
 
-          const usuarios: Usuario[] = await Promise.all(
-            dbUsuarios.map(async (p) => ({
-              id: p.id,
-              nome: p.nome,
-              email: '', // email fica no Supabase Auth, não no profile
-              role: p.role as Usuario['role'],
-              status: p.status as Usuario['status'],
-              permissoes: p.permissoes as unknown as PermissoesUsuario,
-              createdAt: new Date(p.criado_em),
-              updatedAt: new Date(p.atualizado_em),
-            })),
-          );
+          const usuarios: Usuario[] = dbUsuarios.map((p) => ({
+            id: p.id,
+            nome: p.nome,
+            email: p.email ?? '',
+            role: p.role as Usuario['role'],
+            status: p.status as Usuario['status'],
+            permissoes: p.permissoes as unknown as PermissoesUsuario,
+            createdAt: new Date(p.criado_em),
+            updatedAt: new Date(p.atualizado_em),
+          }));
 
           // Seleciona a primeira empresa ativa por padrão
           const { selectedEmpresaId } = get();
