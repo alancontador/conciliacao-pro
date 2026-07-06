@@ -115,8 +115,8 @@ export function Login() {
     setLoading(true);
     try {
       await requestPasswordReset(resetEmail.trim());
-      toast({ title: 'E-mail de recuperação enviado!', description: 'Verifique sua caixa de entrada.' });
-      setTab('login');
+      toast({ title: 'Código enviado!', description: 'Verifique seu e-mail e insira o código de recuperação.' });
+      navigate(`/reset-password?email=${encodeURIComponent(resetEmail.trim())}`);
     } catch (err) {
       logger.warn('auth/password-reset-failed', { error: err, context: { action: 'requestPasswordReset' } });
       toast({ title: 'E-mail não encontrado', variant: 'destructive' });
@@ -286,7 +286,7 @@ export function Login() {
                 Recuperar senha
               </CardTitle>
               <CardDescription>
-                Enviaremos um link de redefinição para o seu e-mail.
+                Enviaremos um código de recuperação para o seu e-mail.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -300,7 +300,7 @@ export function Login() {
                   </div>
                 </div>
                 <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? 'Enviando...' : 'Enviar link de recuperação'}
+                  {loading ? 'Enviando...' : 'Enviar código de recuperação'}
                 </Button>
               </form>
               <div className="mt-4 pt-4 border-t text-center">
