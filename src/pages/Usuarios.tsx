@@ -112,20 +112,20 @@ export function Usuarios() {
         });
         toast({ title: 'Usuário atualizado' });
       } else {
-        await addUsuario({
+        const token = await addUsuario({
           nome: form.nome.trim(),
           role: form.role,
           status: form.status,
           permissoes: form.permissoes,
         }, form.email.trim());
-        // Gera link de convite e abre mailto
-        const inviteUrl = `${window.location.origin}/aceitar-convite`;
-        const subject = encodeURIComponent('Convite — ConciliaçãoPRO');
+        // Abre Gmail com o e-mail de convite já preenchido
+        const inviteUrl = `${window.location.origin}/aceitar-convite?token=${token}`;
+        const subject = encodeURIComponent('Convite de acesso — ConciliaçãoPRO');
         const body = encodeURIComponent(
-          `Olá, ${form.nome.trim()}!\n\nVocê foi convidado para acessar o ConciliaçãoPRO.\n\nClique no link para criar sua senha:\n${inviteUrl}?token=AGUARDE_O_TOKEN\n\nSe precisar do link, entre em contato com o administrador.`
+          `Olá, ${form.nome.trim()}!\n\nVocê foi convidado para acessar o ConciliaçãoPRO.\n\nClique no link abaixo para criar sua senha de acesso:\n\n${inviteUrl}\n\nEste link expira em 7 dias.\n\nEquipe ConciliaçãoPRO`
         );
-        window.open(`mailto:${form.email.trim()}?subject=${subject}&body=${body}`);
-        toast({ title: 'Convite criado e e-mail preparado', description: `Um link de acesso será enviado para ${form.email.trim()}` });
+        window.open(`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(form.email.trim())}&su=${subject}&body=${body}`);
+        toast({ title: 'Convite criado!', description: `Abra o Gmail com conciliacaopro@gmail.com e envie o e-mail para ${form.email.trim()}` });
       }
     } catch (err: unknown) {
       logger.error('usuarios/save-failed', {

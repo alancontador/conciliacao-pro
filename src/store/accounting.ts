@@ -109,7 +109,7 @@ interface AccountingState {
   selectEmpresa: (id: string) => Promise<void>;
 
   // Usuários
-  addUsuario: (u: Omit<Usuario, 'id' | 'createdAt' | 'updatedAt'>, email: string) => Promise<void>;
+  addUsuario: (u: Omit<Usuario, 'id' | 'createdAt' | 'updatedAt'>, email: string) => Promise<string>;
   updateUsuario: (id: string, updates: Partial<Omit<Usuario, 'id' | 'createdAt'>>) => Promise<void>;
   deleteUsuario: (id: string) => Promise<void>;
   requestPasswordReset_user: (email: string) => Promise<void>;
@@ -600,7 +600,7 @@ export const useAccountingStore = create<AccountingState>()(
         };
         set((state) => ({ usuarios: [...state.usuarios, pendingUser] }));
 
-        return convite.token as unknown as void;
+        return convite.token;
       },
 
       updateUsuario: async (id, updates) => {
