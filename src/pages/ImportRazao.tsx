@@ -50,6 +50,25 @@ const parseDateCell = (v: any): Date | null => {
   if (m) { const dd=+m[1], mm=+m[2]-1, yy=+m[3]; const yyyy = yy<100?yy+2000:yy; const d=new Date(yyyy,mm,dd); return isValidDate(d)?d:null; }
   const d = new Date(s); return isValidDate(d)?d:null;
 };
+// Formato M/D/YY usado no layout "limpo" exportado em padrão americano
+const parseDateUS = (v: any): Date | null => {
+  if (v == null || v === '') return null;
+  if (v instanceof Date && !isNaN(v.getTime())) return v;
+  if (typeof v === 'number') { const d = excelSerialToDate(v); return isValidDate(d) ? d : null; }
+  const s = v.toString().trim();
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) { const mo=+m[1]-1, dd=+m[2], yy=+m[3]; const yyyy=yy<100?yy+2000:yy; const d=new Date(yyyy,mo,dd); return isValidDate(d)?d:null; }
+  return null;
+};
+// Detecta se a coluna de data usa M/D/YY: basta encontrar uma linha onde a parte do meio > 12
+const detectUSDateFormat = (col: number, rows: any[][], maxCheck = 40): boolean => {
+  for (const row of rows.slice(0, maxCheck)) {
+    const v = row[col]; if (!v) continue;
+    const m = v.toString().trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (m && +m[2] > 12) return true;
+  }
+  return false;
+};
 const rowEmpty = (row: any[]) => !row || row.every(c => c == null || String(c).trim() === '');
 
 // “UsedRange” à esquerda
@@ -266,6 +285,11 @@ const processWorkbook = (raw: any[][]) => {
 
   const idx = mapColumnsSmart(header, body.slice(0, 50));
 
+  // Detecta se a coluna DATA usa formato americano M/D/YY (ex: "12/31/25")
+  const parseDate = (idx.DATA != null && detectUSDateFormat(idx.DATA, body, 40))
+    ? parseDateUS
+    : parseDateCell;
+
   const out: LinhaRazao[] = [];
   for (const row of body) {
     if (rowEmpty(row)) continue;
@@ -273,13 +297,13 @@ const processWorkbook = (raw: any[][]) => {
 
     const vData = idx.DATA != null ? row[idx.DATA] : undefined;
     if (idx.DATA != null) {
-      const d = parseDateCell(vData);
+      const d = parseDate(vData);
       if (!isValidDate(d)) continue;
     }
 
     const r: LinhaRazao = {
       conta: idx.CONTA!=null ? String(row[idx.CONTA] ?? '').trim() : '',
-      data:  idx.DATA !=null ? parseDateCell(vData) : null,
+      data:  idx.DATA !=null ? parseDate(vData) : null,
       lote:  idx.LOTE !=null ? String(row[idx.LOTE] ?? '').trim() : '',
       historico: idx.HISTORICO!=null ? String(row[idx.HISTORICO] ?? '').trim() : '',
       debito: idx.DEBITO!=null ? parseNumberBR(row[idx.DEBITO]) : 0,
