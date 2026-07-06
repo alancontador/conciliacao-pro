@@ -7,9 +7,9 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useAccountingStore } from '@/store/accounting';
 import { logger } from '@/lib/logger';
+import { parseXlsxInWorker } from '@/lib/parse-xlsx';
 import { CheckCircle, FileSpreadsheet } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import * as XLSX from 'xlsx';
 
 // ===== Tipos =====
 type LinhaRazao = {
@@ -250,10 +250,7 @@ const processCSV = (text: string): { rows: LinhaRazao[]; totalRaw: number } => {
 };
 
 // ===== parser principal =====
-const processWorkbook = (wb: XLSX.WorkBook) => {
-  const sheetName = wb.SheetNames[0];
-  const sh = wb.Sheets[sheetName];
-  const raw: any[][] = XLSX.utils.sheet_to_json(sh, { header: 1, raw: true, blankrows: false }) as any[][];
+const processWorkbook = (raw: any[][]) => {
   if (!raw.length) return { rows: [] as LinhaRazao[], totalRaw: 0 };
 
   // Tenta primeiro o layout fixo (mesmo do parser de .csv): muitas planilhas Excel são o
@@ -349,8 +346,9 @@ export function ImportRazao() {
         ({ rows, totalRaw } = processCSV(text));
       } else {
         const buf = await selectedFile.arrayBuffer();
-        const wb = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: false, cellText: false });
-        ({ rows, totalRaw } = processWorkbook(wb));
+        const parsed = await parseXlsxInWorker(buf, { blankrows: false });
+        if (!parsed.ok) throw new Error(parsed.error);
+        ({ rows, totalRaw } = processWorkbook(parsed.rawData as any[][]));
       }
 
       setPreviewData(rows);
@@ -381,8 +379,9 @@ export function ImportRazao() {
         ({ rows, totalRaw } = processCSV(text));
       } else {
         const buf = await file.arrayBuffer();
-        const wb = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: false, cellText: false });
-        ({ rows, totalRaw } = processWorkbook(wb));
+        const parsed = await parseXlsxInWorker(buf, { blankrows: false });
+        if (!parsed.ok) throw new Error(parsed.error);
+        ({ rows, totalRaw } = processWorkbook(parsed.rawData as any[][]));
       }
 
       setRazaoData(rows);

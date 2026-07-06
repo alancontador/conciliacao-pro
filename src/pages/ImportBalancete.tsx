@@ -9,9 +9,9 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useAccountingStore } from '@/store/accounting';
 import { logger } from '@/lib/logger';
+import { parseXlsxInWorker } from '@/lib/parse-xlsx';
 import { AlertCircle, CheckCircle, FileSpreadsheet, Info } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import * as XLSX from 'xlsx';
 
 type FormatoBalancete = 'sem-cabecalho' | 'com-cabecalho';
 
@@ -255,27 +255,21 @@ export function ImportBalancete() {
 
     log.info('file-selected', { data: { fileName: selectedFile.name, sizeBytes: selectedFile.size, sizeKB: Math.round(selectedFile.size / 1024) } });
 
-    // Yield para o browser renderizar o estado de carregamento antes de bloquear a UI thread
-    await new Promise<void>(resolve => setTimeout(resolve, 50));
-
     try {
       const arrayBuffer = await selectedFile.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellFormula: false, cellHTML: false, cellText: false, cellNF: false, cellDates: false, sheetStubs: false });
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
+      // Parse em Web Worker — main thread permanece responsivo mesmo para arquivos de 13MB+
+      const parsed = await parseXlsxInWorker(arrayBuffer);
 
-      if (!sheet) {
-        const msg = 'Arquivo não pôde ser lido. Abra-o no Excel, salve como .xlsx e tente novamente.';
+      if (!parsed.ok) {
+        const msg = parsed.error === 'no-sheet'
+          ? 'Arquivo não pôde ser lido. Abra-o no Excel, salve como .xlsx e tente novamente.'
+          : 'Erro ao processar o arquivo. Verifique se está no formato correto.';
         setParseError(msg);
-        log.warn('file-no-sheet', { data: { fileName: selectedFile.name, sheets: workbook.SheetNames } });
+        log.warn('file-parse-worker-error', { data: { fileName: selectedFile.name, error: parsed.error } });
         return;
       }
 
-      const rawData: any[][] = XLSX.utils.sheet_to_json(sheet, {
-        header: 1,
-        defval: '',
-        raw: true,
-      });
+      const rawData: any[][] = parsed.rawData as any[][];
 
       rawDataRef.current = rawData;
 
@@ -320,28 +314,20 @@ export function ImportBalancete() {
 
     try {
       setIsLoading(true);
-      await new Promise<void>(resolve => setTimeout(resolve, 50));
 
       const arrayBuffer = await file.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellFormula: false, cellHTML: false, cellText: false, cellNF: false, cellDates: false, sheetStubs: false });
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
+      const parsed = await parseXlsxInWorker(arrayBuffer);
 
-      if (!sheet) {
+      if (!parsed.ok) {
         toast({
-          title: 'Arquivo XLS não suportado',
-          description: 'Este arquivo XLS não pôde ser lido. Abra-o no Excel, salve como .xlsx e tente novamente.',
+          title: 'Arquivo não suportado',
+          description: 'Abra-o no Excel, salve como .xlsx e tente novamente.',
           variant: 'destructive',
         });
         return;
       }
 
-      const rawData: any[][] = XLSX.utils.sheet_to_json(sheet, {
-        header: 1,
-        defval: '',
-        raw: true,
-      });
-
+      const rawData: any[][] = parsed.rawData as any[][];
       const processedData = extractRowsFromLayout(rawData, minCharacters, false, formato);
 
       setBalanceteData(processedData);
