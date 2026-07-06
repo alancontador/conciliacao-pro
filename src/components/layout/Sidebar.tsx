@@ -94,7 +94,7 @@ export function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-4 space-y-2">
+      <nav className={cn('flex-1 space-y-1', collapsed ? 'px-2 py-4' : 'p-4')}>
         {visibleNav.map((item) => {
           const isActive = location.pathname === item.href;
 
@@ -103,7 +103,8 @@ export function Sidebar() {
               key={item.name}
               to={item.href}
               className={cn(
-                'flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                'flex items-center rounded-lg text-sm font-medium transition-colors',
+                collapsed ? 'justify-center px-0 py-2.5' : 'space-x-3 px-3 py-2',
                 isActive
                   ? 'bg-primary text-primary-foreground'
                   : 'text-muted-foreground hover:text-foreground hover:bg-muted',
