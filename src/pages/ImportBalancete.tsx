@@ -456,7 +456,7 @@ export function ImportBalancete() {
           <CardDescription>Carregue o arquivo Excel contendo os dados do balancete</CardDescription>
         </CardHeader>
         <CardContent>
-          <FileUpload onFileSelect={handleFileSelect} isLoading={isLoading} maxSize={50 * 1024 * 1024} />
+          <FileUpload onFileSelect={handleFileSelect} isLoading={isLoading} maxSize={100 * 1024 * 1024} />
         </CardContent>
       </Card>
 

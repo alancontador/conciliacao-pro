@@ -429,7 +429,7 @@ export function ImportRazao() {
           <CardDescription>Carregue o arquivo Excel contendo as movimentações do razão</CardDescription>
         </CardHeader>
         <CardContent>
-          <FileUpload onFileSelect={handleFileSelect} isLoading={isLoading} allowCsv maxSize={50 * 1024 * 1024} />
+          <FileUpload onFileSelect={handleFileSelect} isLoading={isLoading} allowCsv maxSize={100 * 1024 * 1024} />
         </CardContent>
       </Card>
 
