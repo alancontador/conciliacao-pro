@@ -27,12 +27,18 @@ interface LogPayload {
   data?: unknown;
 }
 
+export interface LogEntry {
+  timestamp: string;
+  level: LogLevel;
+  message: string;
+  context?: Record<string, unknown>;
+  error?: Record<string, unknown>;
+  data?: unknown;
+  [key: string]: unknown;
+}
+
 // ── Sanitization ──────────────────────────────────────────────────────────────
 
-/**
- * Object keys whose values must ALWAYS be redacted, regardless of nesting depth.
- * Comparison is done lowercase so "Password", "PASSWORD", "password" all match.
- */
 const SENSITIVE_KEYS = new Set([
   'password', 'senha', 'pass', 'passwd', 'pwd',
   'token', 'access_token', 'refresh_token', 'id_token',
@@ -41,17 +47,9 @@ const SENSITIVE_KEYS = new Set([
   'pin', 'cvv', 'otp', 'mfa', 'totp',
 ]);
 
-/**
- * Regex patterns applied to every string value.
- * Catches JWTs and Supabase publishable/secret keys even when stored in
- * unknown fields (e.g. nested inside a stringified JSON error message).
- */
 const SENSITIVE_PATTERNS: [RegExp, string][] = [
-  // JWTs — three base64url segments separated by dots
   [/eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]*/g, '[JWT_REDACTED]'],
-  // Supabase publishable & secret keys
   [/sb_(?:publishable|secret)_[A-Za-z0-9_]+/g, '[SUPABASE_KEY_REDACTED]'],
-  // Generic "Bearer <token>" header values
   [/Bearer\s+[A-Za-z0-9\-_.~+/]+=*/gi, 'Bearer [REDACTED]'],
 ];
 
@@ -73,7 +71,6 @@ function sanitize(value: unknown, depth = 0): unknown {
     return {
       name: value.name,
       message: sanitizeString(value.message),
-      // Limit stack to first 6 frames — enough to locate the bug, avoids leaking full paths
       stack: value.stack?.split('\n').slice(0, 6).join('\n'),
     };
   }
@@ -109,6 +106,30 @@ function shouldLog(level: LogLevel): boolean {
   return LEVEL_ORDER[level] >= LEVEL_ORDER[MIN_LEVEL];
 }
 
+// ── In-memory log buffer (para painel de suporte) ─────────────────────────────
+
+const MAX_BUFFER = 200;
+const _buffer: LogEntry[] = [];
+const _subscribers: Array<(entries: LogEntry[]) => void> = [];
+
+export const logStore = {
+  getEntries: (): LogEntry[] => [..._buffer],
+
+  clear: (): void => {
+    _buffer.length = 0;
+    _subscribers.forEach((fn) => fn([]));
+  },
+
+  /** Retorna função de cancelamento */
+  subscribe: (fn: (entries: LogEntry[]) => void): (() => void) => {
+    _subscribers.push(fn);
+    return () => {
+      const i = _subscribers.indexOf(fn);
+      if (i !== -1) _subscribers.splice(i, 1);
+    };
+  },
+};
+
 // ── Emit ──────────────────────────────────────────────────────────────────────
 
 function emit(level: LogLevel, message: string, payload?: LogPayload): void {
@@ -123,7 +144,12 @@ function emit(level: LogLevel, message: string, payload?: LogPayload): void {
     ...(payload?.data !== undefined ? { data: payload.data } : {}),
   };
 
-  const entry = sanitize(raw) as Record<string, unknown>;
+  const entry = sanitize(raw) as LogEntry;
+
+  // Armazena no buffer circular (remove o mais antigo quando cheio)
+  _buffer.push(entry);
+  if (_buffer.length > MAX_BUFFER) _buffer.shift();
+  _subscribers.forEach((fn) => fn([..._buffer]));
 
   const consoleFn =
     level === 'fatal' || level === 'error'
@@ -133,7 +159,6 @@ function emit(level: LogLevel, message: string, payload?: LogPayload): void {
       : console.log;
 
   if (IS_DEV) {
-    // Pretty output for local development
     const STYLES: Record<LogLevel, string> = {
       debug: 'color:#6b7280',
       info:  'color:#3b82f6',
@@ -147,7 +172,6 @@ function emit(level: LogLevel, message: string, payload?: LogPayload): void {
     if (payload?.data !== undefined)    extras.push('data →', entry.data);
     consoleFn(`%c${level.toUpperCase()}%c  ${message}`, STYLES[level], 'color:inherit', ...extras);
   } else {
-    // Compact JSON for production (EasyPanel stdout → log aggregator)
     consoleFn(JSON.stringify(entry));
   }
 }
@@ -169,15 +193,6 @@ export const logger = {
   error: (message: string, payload?: LogPayload) => emit('error', message, payload),
   fatal: (message: string, payload?: LogPayload) => emit('fatal', message, payload),
 
-  /**
-   * Returns a logger pre-bound to a context object.
-   * Use inside actions/handlers to avoid repeating the context on every call.
-   *
-   * @example
-   * const log = logger.withContext({ userId, tenantId, action: 'import-balancete' });
-   * log.info('file-selected', { data: { fileName, size } });
-   * log.error('parse-failed', { error });
-   */
   withContext: (context: LogContext): BoundLogger => ({
     debug: (msg, extra) => emit('debug', msg, { context, ...extra }),
     info:  (msg, extra) => emit('info',  msg, { context, ...extra }),
