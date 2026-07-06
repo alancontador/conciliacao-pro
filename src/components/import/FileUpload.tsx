@@ -118,7 +118,11 @@ export function FileUpload({
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            {fileRejections[0].errors[0].message}
+            {fileRejections[0].errors[0].code === 'file-too-large'
+              ? `Arquivo muito grande. Tamanho máximo permitido: ${(maxSize / (1024 * 1024)).toFixed(0)}MB.`
+              : fileRejections[0].errors[0].code === 'file-invalid-type'
+              ? 'Formato não suportado. Use .xlsx, .xls' + (allowCsv ? ' ou .csv' : '') + '.'
+              : 'Arquivo rejeitado. Verifique o formato e tamanho.'}
           </AlertDescription>
         </Alert>
       )}
