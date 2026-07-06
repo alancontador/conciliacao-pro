@@ -9,7 +9,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useAccountingStore } from '@/store/accounting';
 import { logger } from '@/lib/logger';
-import { CheckCircle, FileSpreadsheet, Info } from 'lucide-react';
+import { AlertCircle, CheckCircle, FileSpreadsheet, Info } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import * as XLSX from 'xlsx';
 
@@ -189,6 +189,7 @@ function extractRowsFromLayout(
 export function ImportBalancete() {
   const [file, setFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
   const [previewData, setPreviewData] = useState<LinhaPreview[]>([]);
   const [minCharacters, setMinCharacters] = useState(1);
   const [formato, setFormato] = useState<FormatoBalancete>('sem-cabecalho');
@@ -237,6 +238,9 @@ export function ImportBalancete() {
     setFile(selectedFile);
     setPreviewData([]);
     setImportStats(null);
+    setParseError(null);
+
+    log.info('file-selected', { data: { fileName: selectedFile.name, sizeBytes: selectedFile.size, sizeKB: Math.round(selectedFile.size / 1024) } });
 
     try {
       setIsLoading(true);
@@ -247,11 +251,9 @@ export function ImportBalancete() {
       const sheet = workbook.Sheets[sheetName];
 
       if (!sheet) {
-        toast({
-          title: 'Arquivo XLS não suportado',
-          description: 'Este arquivo XLS não pôde ser lido. Abra-o no Excel, salve como .xlsx e tente novamente.',
-          variant: 'destructive',
-        });
+        const msg = 'Arquivo não pôde ser lido. Abra-o no Excel, salve como .xlsx e tente novamente.';
+        setParseError(msg);
+        log.warn('file-no-sheet', { data: { fileName: selectedFile.name, sheets: workbook.SheetNames } });
         return;
       }
 
@@ -282,19 +284,18 @@ export function ImportBalancete() {
       });
 
       if (processedForPreview.length === 0) {
-        toast({
-          title: 'Nenhuma linha reconhecida',
-          description: 'O arquivo foi lido, mas nenhuma conta foi encontrada. Verifique se o formato está correto ou tente salvar como .xlsx.',
-          variant: 'destructive',
-        });
+        const headerFound = hdrIdx !== -1;
+        const msg = headerFound
+          ? `Arquivo lido (${dataLen} linha${dataLen !== 1 ? 's' : ''} encontrada${dataLen !== 1 ? 's' : ''}), mas nenhuma conta reconhecida. Verifique se as colunas estão corretas.`
+          : 'Cabeçalho do balancete não encontrado. O arquivo deve ter colunas: Código, Classificação, Descrição, Saldo Anterior, Débito, Crédito, Saldo Atual.';
+        setParseError(msg);
+        log.warn('file-no-rows', { data: { fileName: selectedFile.name, totalRows: rawData.length, headerFound, hdrIdx } });
+      } else {
+        log.info('file-parsed', { data: { fileName: selectedFile.name, validRows: processedForPreview.length, totalRows: dataLen } });
       }
     } catch (error) {
-      log.error('file-parse-failed', { error, data: { fileName: file?.name } });
-      toast({
-        title: 'Erro ao processar arquivo',
-        description: 'Verifique se o arquivo está no formato correto.',
-        variant: 'destructive',
-      });
+      log.error('file-parse-failed', { error, data: { fileName: selectedFile.name } });
+      setParseError('Erro ao processar o arquivo. Verifique se está no formato correto.');
     } finally {
       setIsLoading(false);
     }
@@ -459,6 +460,13 @@ export function ImportBalancete() {
           <FileUpload onFileSelect={handleFileSelect} isLoading={isLoading} maxSize={100 * 1024 * 1024} />
         </CardContent>
       </Card>
+
+      {parseError && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{parseError}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Stats */}
       {importStats && (

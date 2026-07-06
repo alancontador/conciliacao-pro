@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, FileSpreadsheet, AlertCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -22,55 +22,68 @@ export function FileUpload({
   error,
   allowCsv = false,
 }: FileUploadProps) {
-  const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: any[]) => {
-    if (rejectedFiles.length > 0) {
+  const [typeError, setTypeError] = useState<string | null>(null);
+  const [sizeError, setSizeError] = useState<string | null>(null);
+
+  const validExtensions = allowCsv ? ['.xlsx', '.xls', '.csv'] : ['.xlsx', '.xls'];
+
+  const onDrop = useCallback((files: File[]) => {
+    setTypeError(null);
+    setSizeError(null);
+
+    const file = files[0];
+    if (!file) return;
+
+    const ext = '.' + file.name.toLowerCase().split('.').pop();
+    if (!validExtensions.includes(ext)) {
+      setTypeError(`Formato não suportado. Use ${validExtensions.join(', ')}.`);
       return;
     }
 
-    if (acceptedFiles.length > 0) {
-      onFileSelect(acceptedFiles[0]);
+    if (file.size > maxSize) {
+      const mb = (file.size / (1024 * 1024)).toFixed(1);
+      const limit = (maxSize / (1024 * 1024)).toFixed(0);
+      setSizeError(`Arquivo muito grande (${mb}MB). Tamanho máximo: ${limit}MB.`);
+      return;
     }
-  }, [onFileSelect]);
 
-  const acceptedTypes: Record<string, string[]> = {
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-    'application/vnd.ms-excel': ['.xls'],
-    ...(allowCsv ? { 'text/csv': ['.csv'], 'application/csv': ['.csv'] } : {}),
-  };
+    onFileSelect(file);
+  }, [onFileSelect, validExtensions, maxSize]);
 
-  const { getRootProps, getInputProps, isDragActive, fileRejections } = useDropzone({
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: acceptedTypes,
-    maxSize,
     maxFiles: 1,
     disabled: isLoading,
+    // Sem 'accept' aqui — validamos por extensão no onDrop para evitar
+    // rejeições por MIME type não-padrão (ex.: Domínio, Alterdata, etc.)
   });
 
-  const hasError = error || fileRejections.length > 0;
+  const hasError = !!(error || typeError || sizeError);
+  const errorMsg = error || typeError || sizeError;
 
   return (
     <div className="space-y-4">
-      <Card 
+      <Card
         className={`border-2 border-dashed transition-colors ${
-          isDragActive 
-            ? 'border-primary bg-primary/5' 
+          isDragActive
+            ? 'border-primary bg-primary/5'
             : hasError
             ? 'border-destructive bg-destructive/5'
             : 'border-muted-foreground/25 hover:border-primary/50'
         }`}
       >
         <CardContent className="p-8">
-          <div 
-            {...getRootProps()} 
+          <div
+            {...getRootProps()}
             className="flex flex-col items-center justify-center space-y-4 cursor-pointer"
           >
             <input {...getInputProps()} />
-            
+
             <div className={`p-4 rounded-full ${
-              hasError 
-                ? 'bg-destructive/10' 
-                : isDragActive 
-                ? 'bg-primary/10' 
+              hasError
+                ? 'bg-destructive/10'
+                : isDragActive
+                ? 'bg-primary/10'
                 : 'bg-muted'
             }`}>
               {hasError ? (
@@ -84,20 +97,20 @@ export function FileUpload({
 
             <div className="text-center">
               <h3 className="text-lg font-medium mb-2">
-                {isDragActive 
-                  ? 'Solte o arquivo aqui' 
+                {isDragActive
+                  ? 'Solte o arquivo aqui'
                   : isLoading
                   ? 'Processando arquivo...'
                   : 'Selecione ou arraste o arquivo Excel'
                 }
               </h3>
-              
+
               <p className="text-sm text-muted-foreground mb-4">
-                Formatos aceitos: .xlsx, .xls{allowCsv ? ', .csv' : ''} (máx. {(maxSize / (1024 * 1024)).toFixed(0)}MB)
+                Formatos aceitos: {validExtensions.join(', ')} (máx. {(maxSize / (1024 * 1024)).toFixed(0)}MB)
               </p>
 
               {!isLoading && (
-                <Button variant="outline">
+                <Button variant="outline" type="button">
                   <Upload className="w-4 h-4 mr-2" />
                   Selecionar Arquivo
                 </Button>
@@ -107,23 +120,10 @@ export function FileUpload({
         </CardContent>
       </Card>
 
-      {error && (
+      {errorMsg && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {fileRejections.length > 0 && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            {fileRejections[0].errors[0].code === 'file-too-large'
-              ? `Arquivo muito grande. Tamanho máximo permitido: ${(maxSize / (1024 * 1024)).toFixed(0)}MB.`
-              : fileRejections[0].errors[0].code === 'file-invalid-type'
-              ? 'Formato não suportado. Use .xlsx, .xls' + (allowCsv ? ' ou .csv' : '') + '.'
-              : 'Arquivo rejeitado. Verifique o formato e tamanho.'}
-          </AlertDescription>
+          <AlertDescription>{errorMsg}</AlertDescription>
         </Alert>
       )}
     </div>
