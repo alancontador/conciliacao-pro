@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FileSpreadsheet, AlertCircle } from 'lucide-react';
+import { Upload, FileSpreadsheet, AlertCircle, Loader2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -10,6 +10,7 @@ interface FileUploadProps {
   accept?: string[];
   maxSize?: number;
   isLoading?: boolean;
+  loadingMessage?: string;
   error?: string;
   allowCsv?: boolean;
 }
@@ -19,6 +20,7 @@ export function FileUpload({
   accept = ['.xlsx', '.xls'],
   maxSize = 100 * 1024 * 1024,
   isLoading = false,
+  loadingMessage,
   error,
   allowCsv = false,
 }: FileUploadProps) {
@@ -69,6 +71,8 @@ export function FileUpload({
             ? 'border-primary bg-primary/5'
             : hasError
             ? 'border-destructive bg-destructive/5'
+            : isLoading
+            ? 'border-muted-foreground/25 bg-muted/30'
             : 'border-muted-foreground/25 hover:border-primary/50'
         }`}
       >
@@ -82,11 +86,15 @@ export function FileUpload({
             <div className={`p-4 rounded-full ${
               hasError
                 ? 'bg-destructive/10'
+                : isLoading
+                ? 'bg-primary/10'
                 : isDragActive
                 ? 'bg-primary/10'
                 : 'bg-muted'
             }`}>
-              {hasError ? (
+              {isLoading ? (
+                <Loader2 className="w-8 h-8 text-primary animate-spin" />
+              ) : hasError ? (
                 <AlertCircle className="w-8 h-8 text-destructive" />
               ) : (
                 <FileSpreadsheet className={`w-8 h-8 ${
@@ -100,14 +108,20 @@ export function FileUpload({
                 {isDragActive
                   ? 'Solte o arquivo aqui'
                   : isLoading
-                  ? 'Processando arquivo...'
+                  ? (loadingMessage ?? 'Processando arquivo...')
                   : 'Selecione ou arraste o arquivo Excel'
                 }
               </h3>
 
-              <p className="text-sm text-muted-foreground mb-4">
-                Formatos aceitos: {validExtensions.join(', ')} (máx. {(maxSize / (1024 * 1024)).toFixed(0)}MB)
-              </p>
+              {isLoading ? (
+                <p className="text-sm text-muted-foreground">
+                  Aguarde, isso pode levar alguns segundos para arquivos grandes.
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground mb-4">
+                  Formatos aceitos: {validExtensions.join(', ')} (máx. {(maxSize / (1024 * 1024)).toFixed(0)}MB)
+                </p>
+              )}
 
               {!isLoading && (
                 <Button variant="outline" type="button">

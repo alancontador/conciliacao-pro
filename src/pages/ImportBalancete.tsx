@@ -189,6 +189,7 @@ function extractRowsFromLayout(
 export function ImportBalancete() {
   const [file, setFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState<string | undefined>(undefined);
   const [parseError, setParseError] = useState<string | null>(null);
   const [previewData, setPreviewData] = useState<LinhaPreview[]>([]);
   const [minCharacters, setMinCharacters] = useState(1);
@@ -243,6 +244,12 @@ export function ImportBalancete() {
     setPreviewData([]);
     setImportStats(null);
     setParseError(null);
+    const fileMB = selectedFile.size / (1024 * 1024);
+    setLoadingMessage(
+      fileMB > 5
+        ? `Processando arquivo (${fileMB.toFixed(0)}MB)... pode levar alguns segundos`
+        : undefined
+    );
     setIsLoading(true);
     scrollMainToTop();
 
@@ -253,7 +260,7 @@ export function ImportBalancete() {
 
     try {
       const arrayBuffer = await selectedFile.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellFormula: false, cellHTML: false, cellText: false });
+      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellFormula: false, cellHTML: false, cellText: false, cellNF: false, cellDates: false, sheetStubs: false });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
 
@@ -316,7 +323,7 @@ export function ImportBalancete() {
       await new Promise<void>(resolve => setTimeout(resolve, 50));
 
       const arrayBuffer = await file.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellFormula: false, cellHTML: false, cellText: false });
+      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellFormula: false, cellHTML: false, cellText: false, cellNF: false, cellDates: false, sheetStubs: false });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
 
@@ -467,7 +474,7 @@ export function ImportBalancete() {
           <CardDescription>Carregue o arquivo Excel contendo os dados do balancete</CardDescription>
         </CardHeader>
         <CardContent>
-          <FileUpload onFileSelect={handleFileSelect} isLoading={isLoading} maxSize={100 * 1024 * 1024} />
+          <FileUpload onFileSelect={handleFileSelect} isLoading={isLoading} loadingMessage={loadingMessage} maxSize={100 * 1024 * 1024} />
         </CardContent>
       </Card>
 
