@@ -234,19 +234,26 @@ export function ImportBalancete() {
   const { toast } = useToast();
   const log = logger.withContext({ userId: currentUser?.id, empresaId: selectedEmpresaId ?? undefined, action: 'import-balancete' });
 
+  const scrollMainToTop = () => {
+    document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile);
     setPreviewData([]);
     setImportStats(null);
     setParseError(null);
+    setIsLoading(true);
+    scrollMainToTop();
 
     log.info('file-selected', { data: { fileName: selectedFile.name, sizeBytes: selectedFile.size, sizeKB: Math.round(selectedFile.size / 1024) } });
 
-    try {
-      setIsLoading(true);
+    // Yield para o browser renderizar o estado de carregamento antes de bloquear a UI thread
+    await new Promise<void>(resolve => setTimeout(resolve, 50));
 
+    try {
       const arrayBuffer = await selectedFile.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellFormula: false, cellHTML: false, cellText: false });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
 
@@ -306,9 +313,10 @@ export function ImportBalancete() {
 
     try {
       setIsLoading(true);
+      await new Promise<void>(resolve => setTimeout(resolve, 50));
 
       const arrayBuffer = await file.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellFormula: false, cellHTML: false, cellText: false });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
 
@@ -351,6 +359,8 @@ export function ImportBalancete() {
       setFile(null);
       setPreviewData([]);
       setImportStats(null);
+      setParseError(null);
+      scrollMainToTop();
     } catch (error) {
       log.error('import-failed', { error, data: { fileName: file?.name } });
       toast({
