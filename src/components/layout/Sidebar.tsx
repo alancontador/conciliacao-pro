@@ -44,7 +44,10 @@ function initials(nome: string) {
 }
 
 export function Sidebar() {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    const saved = localStorage.getItem('sidebar-collapsed');
+    return saved !== null ? saved === 'true' : true;
+  });
   const location = useLocation();
   const navigate = useNavigate();
   const { currentUser, logout } = useAccountingStore();
@@ -82,7 +85,11 @@ export function Sidebar() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setCollapsed(!collapsed)}
+          onClick={() => {
+            const next = !collapsed;
+            setCollapsed(next);
+            localStorage.setItem('sidebar-collapsed', String(next));
+          }}
           className="h-8 w-8 p-0"
         >
           {collapsed ? (
