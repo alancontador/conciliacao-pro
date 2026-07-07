@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -44,11 +44,11 @@ function initials(nome: string) {
 }
 
 export function Sidebar() {
-  const [collapsed, setCollapsed] = useState(() => {
-    const saved = localStorage.getItem('sidebar-collapsed');
-    return saved !== null ? saved === 'true' : true;
-  });
+  const [collapsed, setCollapsed] = useState(true);
+  const autoCloseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const location = useLocation();
+
+  useEffect(() => () => { if (autoCloseRef.current) clearTimeout(autoCloseRef.current); }, []);
   const navigate = useNavigate();
   const { currentUser, logout } = useAccountingStore();
 
@@ -86,9 +86,12 @@ export function Sidebar() {
           variant="ghost"
           size="sm"
           onClick={() => {
+            if (autoCloseRef.current) { clearTimeout(autoCloseRef.current); autoCloseRef.current = null; }
             const next = !collapsed;
             setCollapsed(next);
-            localStorage.setItem('sidebar-collapsed', String(next));
+            if (!next) {
+              autoCloseRef.current = setTimeout(() => { setCollapsed(true); autoCloseRef.current = null; }, 4000);
+            }
           }}
           className="h-8 w-8 p-0"
         >
