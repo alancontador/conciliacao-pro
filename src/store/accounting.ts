@@ -85,6 +85,7 @@ interface AccountingState {
   updateConta: (numero: string, updates: Partial<Conta>) => void;
   setBalanceteData: (data: BalanceteRow[]) => void;
   setRazaoData: (data: RazaoRow[]) => void;
+  mergeRazaoData: (newRows: RazaoRow[]) => { added: number; duplicates: number };
   addImportHistory: (history: ImportHistory) => void;
   removeImportHistory: (id: string) => void;
   clearImportHistory: () => void;
@@ -311,6 +312,36 @@ export const useAccountingStore = create<AccountingState>()(
             });
           });
         }
+      },
+
+      mergeRazaoData: (newRows) => {
+        const existing = get().razaoData;
+
+        const fingerprint = (r: RazaoRow): string => {
+          const d = r.data instanceof Date ? r.data : new Date(r.data as unknown as string);
+          const dateStr = !isNaN(d.getTime()) ? `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` : '';
+          return `${r.conta}|${dateStr}|${r.lote ?? ''}|${r.debito}|${r.credito}|${r.historico}`;
+        };
+
+        const existingPrints = new Set(existing.map(fingerprint));
+        const toAdd = newRows.filter((r) => !existingPrints.has(fingerprint(r)));
+        const duplicates = newRows.length - toAdd.length;
+
+        if (toAdd.length > 0) {
+          const razaoData = [...existing, ...toAdd];
+          set((state) => sync(state, { razaoData }));
+          const { tenantId, selectedEmpresaId, currentUser } = get();
+          if (tenantId && selectedEmpresaId) {
+            svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { razaoData: get().razaoData }).catch((error) => {
+              logger.error('store/sync-razao-merge-failed', {
+                context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'mergeRazaoData' },
+                error,
+              });
+            });
+          }
+        }
+
+        return { added: toAdd.length, duplicates };
       },
 
       addImportHistory: (history) => {

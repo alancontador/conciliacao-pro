@@ -363,6 +363,7 @@ export function ImportRazao() {
   const [previewData, setPreviewData] = useState<LinhaRazao[]>([]);
   const [importStats, setImportStats] = useState<{
     totalLines: number; validLines: number; ignoredLines: number; errors: string[];
+    added?: number; duplicates?: number;
   } | null>(null);
 
   // paginação (igual ao balancete)
@@ -374,7 +375,7 @@ export function ImportRazao() {
   const endIdx = Math.min(startIdx + pageSize, previewData.length);
   const pageRows = useMemo(() => previewData.slice(startIdx, endIdx), [previewData, startIdx, endIdx]);
 
-  const { setRazaoData, addImportHistory, currentUser, selectedEmpresaId } = useAccountingStore();
+  const { mergeRazaoData, addImportHistory, currentUser, selectedEmpresaId } = useAccountingStore();
   const { toast } = useToast();
   const log = logger.withContext({ userId: currentUser?.id, empresaId: selectedEmpresaId ?? undefined, action: 'import-razao' });
 
@@ -405,6 +406,7 @@ export function ImportRazao() {
         ignoredLines: Math.max(0, (totalRaw - 1) - rows.length),
         errors: [],
       });
+      // importStats.added/duplicates são calculados só ao confirmar, pois dependem do estado atual da store
     } catch (e) {
       log.error('file-parse-failed', { error: e, data: { fileName: selectedFile?.name } });
       toast({ title: 'Erro ao processar arquivo', description: 'Cheque o layout e tente novamente.', variant: 'destructive' });
@@ -431,7 +433,7 @@ export function ImportRazao() {
         ({ rows, totalRaw } = processWorkbook(parsed.rawData as any[][]));
       }
 
-      setRazaoData(rows);
+      const { added, duplicates } = mergeRazaoData(rows);
       addImportHistory({
         id: Date.now().toString(),
         tipo: 'RAZAO',
@@ -439,12 +441,15 @@ export function ImportRazao() {
         data: new Date(),
         usuario: 'Sistema',
         linhasLidas: Math.max(totalRaw - 1, 0),
-        linhasIgnoradas: Math.max(0, (totalRaw - 1) - rows.length),
+        linhasIgnoradas: Math.max(0, (totalRaw - 1) - rows.length) + duplicates,
         erros: [],
         status: 'SUCESSO',
       });
 
-      toast({ title: 'Importação realizada com sucesso!', description: `${rows.length} movimentações foram importadas do razão.` });
+      const desc = duplicates > 0
+        ? `${added} lançamento(s) adicionado(s). ${duplicates} já existiam e foram ignorados.`
+        : `${added} movimentações importadas do razão.`;
+      toast({ title: 'Importação realizada com sucesso!', description: desc });
       setFile(null); setPreviewData([]); setImportStats(null);
     } catch (e) {
       log.error('import-failed', { error: e, data: { fileName: file?.name } });
@@ -489,6 +494,9 @@ export function ImportRazao() {
               <div><div className="font-medium">Linhas ignoradas</div><div className="text-2xl font-bold text-muted-foreground">{importStats.ignoredLines}</div></div>
               <div><div className="font-medium">Erros</div><div className="text-2xl font-bold text-destructive">{importStats.errors.length}</div></div>
             </div>
+            <p className="text-xs text-muted-foreground mt-3">
+              Os lançamentos serão <strong>acumulados</strong> ao razão existente. Duplicatas (mesmo conta, data, lote, valor e histórico) serão ignoradas automaticamente ao confirmar.
+            </p>
           </AlertDescription>
         </Alert>
       )}
