@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
-import { UserPlus, Pencil, Trash2, Search, ShieldCheck, ShieldX, KeyRound } from 'lucide-react';
+import { UserPlus, Pencil, Trash2, Search, ShieldCheck, ShieldX, KeyRound, Copy, Check, Link2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { logger } from '@/lib/logger';
 import type { Usuario, UsuarioRole } from '@/types/usuario';
@@ -54,6 +54,8 @@ export function Usuarios() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState({ ...EMPTY_FORM, permissoes: { ...EMPTY_FORM.permissoes } });
   const [saving, setSaving] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const filtered = usuarios.filter(
     (u) =>
@@ -118,18 +120,12 @@ export function Usuarios() {
           status: form.status,
           permissoes: form.permissoes,
         }, form.email.trim());
-        // Abre Gmail com o e-mail de convite já preenchido
-        const inviteUrl = `${window.location.origin}/aceitar-convite?token=${token}`;
-        const subject = encodeURIComponent('Convite de acesso — ConciliaçãoPRO');
-        const body = encodeURIComponent(
-          `Olá, ${form.nome.trim()}!\n\nVocê foi convidado para acessar o ConciliaçãoPRO.\n\nClique no link abaixo para criar sua senha de acesso:\n\n${inviteUrl}\n\nEste link expira em 7 dias.\n\nEquipe ConciliaçãoPRO`
-        );
-        window.open(`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(form.email.trim())}&su=${subject}&body=${body}`);
-        toast({ title: 'Convite criado!', description: `Abra o Gmail com conciliacaopro@gmail.com e envie o e-mail para ${form.email.trim()}` });
+        const url = `${window.location.origin}/aceitar-convite?token=${token}`;
+        setInviteLink(url);
       }
     } catch (err: unknown) {
       logger.error('usuarios/save-failed', {
-        context: { userId: currentUser?.id, action: dialogMode === 'create' ? 'addUsuario' : 'updateUsuario' },
+        context: { userId: currentUser?.id, action: editId ? 'updateUsuario' : 'addUsuario' },
         error: err,
       });
       toast({ title: err instanceof Error ? err.message : 'Erro ao salvar', variant: 'destructive' });
@@ -444,6 +440,66 @@ export function Usuarios() {
             <Button onClick={handleSave} disabled={saving}>
               {saving ? 'Salvando...' : editId ? 'Salvar alterações' : 'Criar usuário'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog link de convite */}
+      <Dialog open={!!inviteLink} onOpenChange={(open) => { if (!open) { setInviteLink(null); setCopiedLink(false); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="w-5 h-5 text-primary" />
+              Convite criado com sucesso
+            </DialogTitle>
+            <DialogDescription>
+              Envie o link abaixo para o usuário. Ao clicar, ele criará a própria senha e já ficará vinculado ao seu escritório.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-lg border bg-muted p-3 break-all text-sm font-mono text-muted-foreground select-all">
+              {inviteLink}
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                className="flex-1"
+                onClick={async () => {
+                  if (!inviteLink) return;
+                  await navigator.clipboard.writeText(inviteLink);
+                  setCopiedLink(true);
+                  setTimeout(() => setCopiedLink(false), 2500);
+                }}
+              >
+                {copiedLink ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
+                {copiedLink ? 'Copiado!' : 'Copiar link'}
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (!inviteLink) return;
+                  const nomeusuario = form.nome;
+                  const emailusuario = form.email;
+                  const subject = encodeURIComponent('Convite de acesso — ConciliaçãoPRO');
+                  const body = encodeURIComponent(
+                    `Olá, ${nomeusuario}!\n\nVocê foi convidado para acessar o ConciliaçãoPRO.\n\nClique no link abaixo para criar sua senha de acesso:\n\n${inviteLink}\n\nEste link expira em 7 dias.\n\nEquipe ConciliaçãoPRO`
+                  );
+                  window.open(`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(emailusuario)}&su=${subject}&body=${body}`);
+                }}
+              >
+                Abrir Gmail
+              </Button>
+            </div>
+
+            <p className="text-xs text-muted-foreground bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded px-3 py-2">
+              Importante: o usuário deve acessar este link para criar a conta. Se ele se cadastrar direto na tela de login, ficará desvinculado do escritório.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => { setInviteLink(null); setCopiedLink(false); }}>Fechar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
