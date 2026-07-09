@@ -85,7 +85,12 @@ interface AccountingState {
   updateConta: (numero: string, updates: Partial<Conta>) => void;
   setBalanceteData: (data: BalanceteRow[]) => void;
   setRazaoData: (data: RazaoRow[]) => void;
-  mergeRazaoData: (newRows: RazaoRow[]) => { added: number; duplicates: number };
+  mergeRazaoData: (newRows: RazaoRow[]) => {
+    added: number;
+    duplicates: number;
+    saldoOk: string[];
+    saldoDiff: { conta: string; esperado: number; calculado: number }[];
+  };
   addImportHistory: (history: ImportHistory) => void;
   removeImportHistory: (id: string) => void;
   clearImportHistory: () => void;
@@ -317,17 +322,11 @@ export const useAccountingStore = create<AccountingState>()(
       mergeRazaoData: (newRows) => {
         const existing = get().razaoData;
 
+        // Chave de identidade: data + valor débito + valor crédito + histórico (sem lote — pode mudar)
         const fingerprint = (r: RazaoRow): string => {
           const d = r.data instanceof Date ? r.data : new Date(r.data as unknown as string);
           const dateStr = !isNaN(d.getTime()) ? `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` : '';
-          // Normaliza lote: null / "" / "0" / "00" → '' (sem lote)
-          const lote = (r.lote ?? '').trim().replace(/^0+$/, '');
-          if (lote) {
-            // Com lote: conta+data+lote é suficiente — o mesmo lote afeta uma conta no máximo uma vez
-            return `${r.conta}|${dateStr}|${lote}`;
-          }
-          // Sem lote: usa valores com 2 casas fixas para evitar imprecisão de ponto flutuante
-          return `${r.conta}|${dateStr}||${r.debito.toFixed(2)}|${r.credito.toFixed(2)}|${r.historico}`;
+          return `${r.conta}|${dateStr}|${r.debito.toFixed(2)}|${r.credito.toFixed(2)}|${r.historico}`;
         };
 
         const existingPrints = new Set(existing.map(fingerprint));
@@ -348,7 +347,30 @@ export const useAccountingStore = create<AccountingState>()(
           }
         }
 
-        return { added: toAdd.length, duplicates };
+        // Validação de saldo: para cada conta afetada, compara saldo calculado com balancete
+        const balancete = get().balanceteData;
+        const mergedRazao = get().razaoData;
+        const affectedContas = [...new Set(newRows.map((r) => r.conta.trim()))];
+        const saldoOk: string[] = [];
+        const saldoDiff: { conta: string; esperado: number; calculado: number }[] = [];
+
+        for (const conta of affectedContas) {
+          const bal = balancete.find((b) => b.codigo.trim() === conta);
+          if (!bal) continue;
+          const rows = mergedRazao.filter((r) => r.conta.trim() === conta);
+          const calculado = rows.reduce(
+            (sum, r) => (bal.natureza === 'ATIVO' ? sum + r.debito - r.credito : sum + r.credito - r.debito),
+            0,
+          );
+          const esperado = Math.abs(bal.saldoAtual);
+          if (Math.abs(calculado - esperado) < 0.01) {
+            saldoOk.push(conta);
+          } else {
+            saldoDiff.push({ conta, esperado, calculado });
+          }
+        }
+
+        return { added: toAdd.length, duplicates, saldoOk, saldoDiff };
       },
 
       addImportHistory: (history) => {

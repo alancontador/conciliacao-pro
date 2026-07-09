@@ -364,6 +364,8 @@ export function ImportRazao() {
   const [importStats, setImportStats] = useState<{
     totalLines: number; validLines: number; ignoredLines: number; errors: string[];
     added?: number; duplicates?: number;
+    saldoOk?: string[];
+    saldoDiff?: { conta: string; esperado: number; calculado: number }[];
   } | null>(null);
 
   // paginação (igual ao balancete)
@@ -433,7 +435,7 @@ export function ImportRazao() {
         ({ rows, totalRaw } = processWorkbook(parsed.rawData as any[][]));
       }
 
-      const { added, duplicates } = mergeRazaoData(rows);
+      const { added, duplicates, saldoOk, saldoDiff } = mergeRazaoData(rows);
       addImportHistory({
         id: Date.now().toString(),
         tipo: 'RAZAO',
@@ -446,11 +448,17 @@ export function ImportRazao() {
         status: 'SUCESSO',
       });
 
-      const desc = duplicates > 0
-        ? `${added} lançamento(s) adicionado(s). ${duplicates} já existiam e foram ignorados.`
-        : `${added} movimentações importadas do razão.`;
-      toast({ title: 'Importação realizada com sucesso!', description: desc });
-      setFile(null); setPreviewData([]); setImportStats(null);
+      setFile(null); setPreviewData([]);
+      setImportStats({
+        totalLines: Math.max(totalRaw - 1, 0),
+        validLines: rows.length,
+        ignoredLines: Math.max(0, (totalRaw - 1) - rows.length) + duplicates,
+        errors: [],
+        added,
+        duplicates,
+        saldoOk,
+        saldoDiff,
+      });
     } catch (e) {
       log.error('import-failed', { error: e, data: { fileName: file?.name } });
       toast({ title: 'Erro na importação', description: 'Não foi possível importar os dados.', variant: 'destructive' });
@@ -485,20 +493,87 @@ export function ImportRazao() {
       </Card>
 
       {importStats && (
-        <Alert>
-          <CheckCircle className="h-4 w-4" />
-          <AlertDescription>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2">
-              <div><div className="font-medium">Total de linhas</div><div className="text-2xl font-bold">{importStats.totalLines}</div></div>
-              <div><div className="font-medium">Linhas válidas</div><div className="text-2xl font-bold text-success">{importStats.validLines}</div></div>
-              <div><div className="font-medium">Linhas ignoradas</div><div className="text-2xl font-bold text-muted-foreground">{importStats.ignoredLines}</div></div>
-              <div><div className="font-medium">Erros</div><div className="text-2xl font-bold text-destructive">{importStats.errors.length}</div></div>
-            </div>
-            <p className="text-xs text-muted-foreground mt-3">
-              Os lançamentos serão <strong>acumulados</strong> ao razão existente. Duplicatas (mesmo conta, data, lote, valor e histórico) serão ignoradas automaticamente ao confirmar.
-            </p>
-          </AlertDescription>
-        </Alert>
+        <div className="space-y-3">
+          {/* Resultado da importação */}
+          <Alert>
+            <CheckCircle className="h-4 w-4" />
+            <AlertDescription>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2">
+                <div><div className="font-medium">Total de linhas</div><div className="text-2xl font-bold">{importStats.totalLines}</div></div>
+                <div><div className="font-medium">Linhas válidas</div><div className="text-2xl font-bold text-success">{importStats.validLines}</div></div>
+                <div><div className="font-medium">Ignoradas / Duplicatas</div><div className="text-2xl font-bold text-muted-foreground">{importStats.ignoredLines}</div></div>
+                <div><div className="font-medium">Erros</div><div className="text-2xl font-bold text-destructive">{importStats.errors.length}</div></div>
+              </div>
+              {importStats.added !== undefined && (
+                <p className="text-sm mt-3">
+                  <strong>{importStats.added}</strong> lançamento(s) adicionado(s).
+                  {(importStats.duplicates ?? 0) > 0 && (
+                    <span className="text-muted-foreground"> {importStats.duplicates} já existiam e foram ignorados (mesma data, valor e histórico).</span>
+                  )}
+                </p>
+              )}
+              {importStats.added === undefined && (
+                <p className="text-xs text-muted-foreground mt-3">
+                  Os lançamentos serão <strong>acumulados</strong> ao razão existente. Duplicatas (mesma data, valor e histórico) serão ignoradas ao confirmar.
+                </p>
+              )}
+            </AlertDescription>
+          </Alert>
+
+          {/* Validação de saldo por conta */}
+          {((importStats.saldoOk?.length ?? 0) > 0 || (importStats.saldoDiff?.length ?? 0) > 0) && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Validação de Saldo</CardTitle>
+                <CardDescription>
+                  Comparação entre o saldo calculado do razão e o balancete para as contas importadas.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {(importStats.saldoDiff?.length ?? 0) > 0 && (
+                  <div>
+                    <p className="text-sm font-medium text-destructive mb-2">
+                      ⚠ {importStats.saldoDiff!.length} conta(s) com divergência de saldo:
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b text-left text-muted-foreground">
+                            <th className="py-1 pr-4 font-medium">Conta</th>
+                            <th className="py-1 pr-4 font-medium text-right">Saldo Balancete</th>
+                            <th className="py-1 pr-4 font-medium text-right">Saldo Calculado</th>
+                            <th className="py-1 font-medium text-right">Diferença</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {importStats.saldoDiff!.map((d) => (
+                            <tr key={d.conta} className="border-b last:border-0">
+                              <td className="py-1 pr-4 font-mono">{d.conta}</td>
+                              <td className="py-1 pr-4 text-right font-mono">
+                                R$ {d.esperado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-1 pr-4 text-right font-mono">
+                                R$ {d.calculado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-1 text-right font-mono text-destructive font-medium">
+                                R$ {Math.abs(d.esperado - d.calculado).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+                {(importStats.saldoOk?.length ?? 0) > 0 && (
+                  <p className="text-sm text-success font-medium">
+                    ✓ {importStats.saldoOk!.length} conta(s) com saldo conferindo corretamente com o balancete.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
       )}
 
       {previewData.length > 0 && (
