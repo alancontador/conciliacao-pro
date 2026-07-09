@@ -320,7 +320,14 @@ export const useAccountingStore = create<AccountingState>()(
         const fingerprint = (r: RazaoRow): string => {
           const d = r.data instanceof Date ? r.data : new Date(r.data as unknown as string);
           const dateStr = !isNaN(d.getTime()) ? `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` : '';
-          return `${r.conta}|${dateStr}|${r.lote ?? ''}|${r.debito}|${r.credito}|${r.historico}`;
+          // Normaliza lote: null / "" / "0" / "00" → '' (sem lote)
+          const lote = (r.lote ?? '').trim().replace(/^0+$/, '');
+          if (lote) {
+            // Com lote: conta+data+lote é suficiente — o mesmo lote afeta uma conta no máximo uma vez
+            return `${r.conta}|${dateStr}|${lote}`;
+          }
+          // Sem lote: usa valores com 2 casas fixas para evitar imprecisão de ponto flutuante
+          return `${r.conta}|${dateStr}||${r.debito.toFixed(2)}|${r.credito.toFixed(2)}|${r.historico}`;
         };
 
         const existingPrints = new Set(existing.map(fingerprint));
