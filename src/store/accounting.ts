@@ -86,12 +86,7 @@ interface AccountingState {
   updateConta: (numero: string, updates: Partial<Conta>) => void;
   setBalanceteData: (data: BalanceteRow[]) => void;
   setRazaoData: (data: RazaoRow[]) => void;
-  mergeRazaoData: (newRows: RazaoRow[]) => {
-    added: number;
-    duplicates: number;
-    saldoOk: string[];
-    saldoDiff: { conta: string; esperado: number; calculado: number }[];
-  };
+  mergeRazaoData: (newRows: RazaoRow[]) => { added: number; duplicates: number };
   addImportHistory: (history: ImportHistory) => void;
   removeImportHistory: (id: string) => void;
   clearImportHistory: () => void;
@@ -381,30 +376,7 @@ export const useAccountingStore = create<AccountingState>()(
           }
         }
 
-        // Validação de saldo: para cada conta afetada, compara saldo calculado com balancete
-        const balancete = get().balanceteData;
-        const mergedRazao = get().razaoData;
-        const affectedContas = [...new Set(newRows.map((r) => r.conta.trim()))];
-        const saldoOk: string[] = [];
-        const saldoDiff: { conta: string; esperado: number; calculado: number }[] = [];
-
-        for (const conta of affectedContas) {
-          const bal = balancete.find((b) => b.codigo.trim() === conta);
-          if (!bal) continue;
-          const rows = mergedRazao.filter((r) => r.conta.trim() === conta);
-          const calculado = rows.reduce(
-            (sum, r) => (bal.natureza === 'ATIVO' ? sum + r.debito - r.credito : sum + r.credito - r.debito),
-            0,
-          );
-          const esperado = Math.abs(bal.saldoAtual);
-          if (Math.abs(calculado - esperado) < 0.01) {
-            saldoOk.push(conta);
-          } else {
-            saldoDiff.push({ conta, esperado, calculado });
-          }
-        }
-
-        return { added: toAdd.length, duplicates, saldoOk, saldoDiff };
+        return { added: toAdd.length, duplicates };
       },
 
       addImportHistory: (history) => {
