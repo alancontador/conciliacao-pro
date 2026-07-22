@@ -6,6 +6,7 @@ import type { Empresa } from '@/types/empresa';
 import * as svc from '@/services/supabase.service';
 import { supabase } from '@/lib/supabase';
 import type { MatchReasons } from '@/lib/reconciliation/types';
+import { computeTextScore } from '@/lib/reconciliation/text';
 import { logger } from '@/lib/logger';
 
 // ── Dados por empresa (cache local) ──────────────────────────────────────────
@@ -322,15 +323,48 @@ export const useAccountingStore = create<AccountingState>()(
       mergeRazaoData: (newRows) => {
         const existing = get().razaoData;
 
-        // Chave de identidade: data + valor débito + valor crédito + histórico (sem lote — pode mudar)
-        const fingerprint = (r: RazaoRow): string => {
-          const d = r.data instanceof Date ? r.data : new Date(r.data as unknown as string);
-          const dateStr = !isNaN(d.getTime()) ? `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` : '';
-          return `${r.conta}|${dateStr}|${r.debito.toFixed(2)}|${r.credito.toFixed(2)}|${r.historico}`;
+        // Converte data para chave de dia (ignora hora/timezone)
+        const dayKey = (d: Date | string): string => {
+          const dt = d instanceof Date ? d : new Date(d as string);
+          return isNaN(dt.getTime()) ? '' : `${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`;
         };
 
-        const existingPrints = new Set(existing.map(fingerprint));
-        const toAdd = newRows.filter((r) => !existingPrints.has(fingerprint(r)));
+        // Agrupa existentes por (conta|dia|debito|credito) para lookup eficiente
+        // → a maioria dos grupos terá 1 elemento; fuzzy só roda nesse subconjunto pequeno
+        const existingByKey = new Map<string, RazaoRow[]>();
+        for (const r of existing) {
+          const k = `${r.conta}|${dayKey(r.data)}|${r.debito.toFixed(2)}|${r.credito.toFixed(2)}`;
+          const arr = existingByKey.get(k);
+          if (arr) arr.push(r); else existingByKey.set(k, [r]);
+        }
+
+        // Extrai sequências de 5+ dígitos do histórico (números de NF, lote, pedido…)
+        const docNums = (text: string): Set<string> =>
+          new Set((text.match(/\d{5,}/g) ?? []));
+
+        // Um lançamento novo é duplicata se:
+        //   1. Mesma conta + mesma data + mesmo débito + mesmo crédito (exato, ±0.01)
+        //   2. E histórico "é o mesmo" — verificado em duas etapas:
+        //      a) Se ambos têm números de documento (NF, lote…) mas NENHUM em comum → distintos
+        //      b) Caso contrário, score de similaridade de texto ≥ 0.75 confirma duplicata
+        const isDuplicate = (r: RazaoRow): boolean => {
+          const k = `${r.conta}|${dayKey(r.data)}|${r.debito.toFixed(2)}|${r.credito.toFixed(2)}`;
+          const candidates = existingByKey.get(k);
+          if (!candidates) return false;
+          return candidates.some((ex) => {
+            const numsNew = docNums(r.historico);
+            const numsEx  = docNums(ex.historico);
+            // Ambos têm números de documento mas sem interseção → lançamentos distintos
+            if (numsNew.size > 0 && numsEx.size > 0) {
+              const hasCommon = [...numsNew].some((n) => numsEx.has(n));
+              if (!hasCommon) return false;
+            }
+            // Sem números ou com número em comum → valida pela similaridade do texto
+            return computeTextScore(r.historico, ex.historico).score >= 0.75;
+          });
+        };
+
+        const toAdd = newRows.filter((r) => !isDuplicate(r));
         const duplicates = newRows.length - toAdd.length;
 
         if (toAdd.length > 0) {
