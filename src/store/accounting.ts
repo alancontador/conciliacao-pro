@@ -392,11 +392,13 @@ export const useAccountingStore = create<AccountingState>()(
           const bal = balancete.find((b) => b.codigo.trim() === conta);
           if (!bal) continue;
           const rows = mergedRazao.filter((r) => r.conta.trim() === conta);
+          // Parte do saldoAnterior (saldo de abertura do período), pois o razão
+          // contém apenas movimentos — não o saldo inicial da conta.
           const calculado = rows.reduce(
             (sum, r) => (bal.natureza === 'ATIVO' ? sum + r.debito - r.credito : sum + r.credito - r.debito),
-            0,
+            bal.saldoAnterior,
           );
-          const esperado = Math.abs(bal.saldoAtual);
+          const esperado = bal.saldoAtual;
           if (Math.abs(calculado - esperado) < 0.01) {
             saldoOk.push(conta);
           } else {
