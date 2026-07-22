@@ -365,7 +365,16 @@ export function ImportRazao() {
     totalLines: number; validLines: number; ignoredLines: number; errors: string[];
     added?: number; duplicates?: number;
     saldoOk?: string[];
-    saldoDiff?: { conta: string; esperado: number; calculado: number }[];
+    saldoDiff?: {
+      conta: string;
+      saldoAnterior: number;
+      totalDebRazao: number;
+      totalCredRazao: number;
+      balDebito: number;
+      balCredito: number;
+      calculado: number;
+      esperado: number;
+    }[];
   } | null>(null);
 
   // paginação (igual ao balancete)
@@ -540,29 +549,40 @@ export function ImportRazao() {
                         <thead>
                           <tr className="border-b text-left text-muted-foreground">
                             <th className="py-1 pr-4 font-medium">Conta</th>
-                            <th className="py-1 pr-4 font-medium text-right">Saldo Balancete</th>
+                            <th className="py-1 pr-4 font-medium text-right">Sal.Anterior (Bal.)</th>
+                            <th className="py-1 pr-4 font-medium text-right">Deb.Razão / Bal.</th>
+                            <th className="py-1 pr-4 font-medium text-right">Cred.Razão / Bal.</th>
                             <th className="py-1 pr-4 font-medium text-right">Saldo Calculado</th>
-                            <th className="py-1 font-medium text-right">Diferença</th>
+                            <th className="py-1 font-medium text-right">Saldo Balancete</th>
                           </tr>
                         </thead>
                         <tbody>
                           {importStats.saldoDiff!.map((d) => (
-                            <tr key={d.conta} className="border-b last:border-0">
-                              <td className="py-1 pr-4 font-mono">{d.conta}</td>
+                            <tr key={d.conta} className="border-b last:border-0 text-xs">
+                              <td className="py-1 pr-4 font-mono font-medium">{d.conta}</td>
                               <td className="py-1 pr-4 text-right font-mono">
-                                R$ {d.esperado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                {d.saldoAnterior.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </td>
-                              <td className="py-1 pr-4 text-right font-mono">
-                                R$ {d.calculado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              <td className={`py-1 pr-4 text-right font-mono ${Math.abs(d.totalDebRazao - d.balDebito) > 0.01 ? 'text-destructive' : 'text-green-600'}`}>
+                                {d.totalDebRazao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} / {d.balDebito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </td>
-                              <td className="py-1 text-right font-mono text-destructive font-medium">
-                                R$ {Math.abs(d.esperado - d.calculado).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              <td className={`py-1 pr-4 text-right font-mono ${Math.abs(d.totalCredRazao - d.balCredito) > 0.01 ? 'text-destructive' : 'text-green-600'}`}>
+                                {d.totalCredRazao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} / {d.balCredito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-1 pr-4 text-right font-mono text-destructive">
+                                {d.calculado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-1 text-right font-mono font-medium">
+                                {d.esperado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Deb.Razão/Bal. = total débito importado vs total débito do balancete (vermelho = período do razão não cobre o balancete completo).
+                    </p>
                   </div>
                 )}
                 {(importStats.saldoOk?.length ?? 0) > 0 && (

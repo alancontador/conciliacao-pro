@@ -90,7 +90,16 @@ interface AccountingState {
     added: number;
     duplicates: number;
     saldoOk: string[];
-    saldoDiff: { conta: string; esperado: number; calculado: number }[];
+    saldoDiff: {
+      conta: string;
+      saldoAnterior: number;
+      totalDebRazao: number;
+      totalCredRazao: number;
+      balDebito: number;
+      balCredito: number;
+      calculado: number;
+      esperado: number;
+    }[];
   };
   addImportHistory: (history: ImportHistory) => void;
   removeImportHistory: (id: string) => void;
@@ -386,23 +395,41 @@ export const useAccountingStore = create<AccountingState>()(
         const mergedRazao = get().razaoData;
         const affectedContas = [...new Set(newRows.map((r) => r.conta.trim()))];
         const saldoOk: string[] = [];
-        const saldoDiff: { conta: string; esperado: number; calculado: number }[] = [];
+        const saldoDiff: {
+          conta: string;
+          saldoAnterior: number;
+          totalDebRazao: number;
+          totalCredRazao: number;
+          balDebito: number;
+          balCredito: number;
+          calculado: number;
+          esperado: number;
+        }[] = [];
 
         for (const conta of affectedContas) {
           const bal = balancete.find((b) => b.codigo.trim() === conta);
           if (!bal) continue;
           const rows = mergedRazao.filter((r) => r.conta.trim() === conta);
-          // Parte do saldoAnterior (saldo de abertura do período), pois o razão
-          // contém apenas movimentos — não o saldo inicial da conta.
-          const calculado = rows.reduce(
-            (sum, r) => (bal.natureza === 'ATIVO' ? sum + r.debito - r.credito : sum + r.credito - r.debito),
-            bal.saldoAnterior,
-          );
+          const totalDebRazao = rows.reduce((s, r) => s + r.debito, 0);
+          const totalCredRazao = rows.reduce((s, r) => s + r.credito, 0);
+          const netMovimento = bal.natureza === 'ATIVO'
+            ? totalDebRazao - totalCredRazao
+            : totalCredRazao - totalDebRazao;
+          const calculado = bal.saldoAnterior + netMovimento;
           const esperado = bal.saldoAtual;
           if (Math.abs(calculado - esperado) < 0.01) {
             saldoOk.push(conta);
           } else {
-            saldoDiff.push({ conta, esperado, calculado });
+            saldoDiff.push({
+              conta,
+              saldoAnterior: bal.saldoAnterior,
+              totalDebRazao,
+              totalCredRazao,
+              balDebito: bal.debito,
+              balCredito: bal.credito,
+              calculado,
+              esperado,
+            });
           }
         }
 
