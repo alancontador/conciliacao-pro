@@ -42,7 +42,7 @@ import { Workbook } from 'exceljs';
 import { generateCandidates } from '@/lib/reconciliation/engine';
 import type { ReconciliationCandidate } from '@/lib/reconciliation/types';
 import { formatCompetencia } from '@/lib/competencia';
-import { isContaBancariaOuAplicacao } from '@/lib/conta-classificacao';
+import { isContaBancariaOuAplicacao, aplicarRegraBancaria } from '@/lib/conta-classificacao';
 
 export function Status() {
   const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, updateConta, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions, logConciliacaoAuditoria, resetEmpresaData, currentUser, empresas, selectedEmpresaId, selectedCompetencia, isCompetenciaReadonly } = useAccountingStore();
@@ -289,7 +289,9 @@ export function Status() {
   // (lançamentos conciliados não alteram o saldo corrido, como se tivessem "saído" da conta).
   // Status e documentos são preservados da store (caso o usuário já tenha reconciliado).
   const processedContas = useMemo(() => {
-    if (balanceteData.length === 0) return contas;
+    // Sem balancete só há as contas persistidas: ainda assim a regra de
+    // banco/aplicação vale (o status salvo pode ser anterior à regra).
+    if (balanceteData.length === 0) return contas.map(aplicarRegraBancaria);
 
     // Índices O(1): agrupa lançamentos do razão por conta e contas persistidas por
     // número — evita a varredura O(contas × razão) que congelava competências grandes.
@@ -332,7 +334,7 @@ export function Status() {
       const diferenca = Math.abs(balancete.saldoAtual) - Math.abs(composicao);
       // Contas bancárias e aplicações financeiras são conciliadas pelo extrato
       // bancário, fora do sistema — entram sempre como CONCILIADAS.
-      const bancaria = isContaBancariaOuAplicacao(balancete.codigo, balancete.descricao);
+      const bancaria = isContaBancariaOuAplicacao(balancete);
       const computedStatus: Conta['status'] = bancaria || Math.abs(diferenca) < 0.01
         ? 'CONCILIADO'
         : stored?.status === 'EM_ANALISE'

@@ -10,7 +10,7 @@ import { supabase } from '@/lib/supabase';
 import type { MatchReasons } from '@/lib/reconciliation/types';
 import { computeTextScore } from '@/lib/reconciliation/text';
 import { currentCompetencia } from '@/lib/competencia';
-import { isContaBancariaOuAplicacao } from '@/lib/conta-classificacao';
+import { isContaBancariaOuAplicacao, aplicarRegraBancaria } from '@/lib/conta-classificacao';
 import { logger } from '@/lib/logger';
 
 // ── Dados por (empresa + competência) — cache local ───────────────────────────
@@ -884,7 +884,8 @@ export const useAccountingStore = create<AccountingState>()(
       // Garante que Dashboard e Status mostrem sempre o mesmo estado.
       getProcessedContas: () => {
         const { contas, balanceteData, razaoData, reconciledRazaoIndices } = get();
-        if (balanceteData.length === 0) return contas;
+        // Sem balancete, a regra de banco/aplicacao ainda vale sobre as contas salvas.
+        if (balanceteData.length === 0) return contas.map(aplicarRegraBancaria);
 
         const reconciledSet = new Set(reconciledRazaoIndices);
 
@@ -918,7 +919,7 @@ export const useAccountingStore = create<AccountingState>()(
             const diferenca = Math.abs(balancete.saldoAtual) - Math.abs(composicao);
             // Contas bancárias e aplicações financeiras são conciliadas pelo
             // extrato bancário, fora do sistema — entram sempre como CONCILIADAS.
-            const bancaria = isContaBancariaOuAplicacao(balancete.codigo, balancete.descricao);
+            const bancaria = isContaBancariaOuAplicacao(balancete);
             const status: Conta['status'] = bancaria || Math.abs(diferenca) < 0.01
               ? 'CONCILIADO'
               : stored?.status === 'EM_ANALISE'
