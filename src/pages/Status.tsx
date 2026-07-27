@@ -39,6 +39,7 @@ import type { Conta, RazaoRow, Documento } from '@/types/accounting';
 import { Workbook } from 'exceljs';
 import { generateCandidates } from '@/lib/reconciliation/engine';
 import type { ReconciliationCandidate } from '@/lib/reconciliation/types';
+import { isContaBancariaOuAplicacao } from '@/lib/conta-classificacao';
 
 export function Status() {
   const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, updateConta, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions, logConciliacaoAuditoria, resetEmpresaData, currentUser, empresas, selectedEmpresaId } = useAccountingStore();
@@ -316,7 +317,10 @@ export function Status() {
       const composicao = saldoPendente;
 
       const diferenca = Math.abs(balancete.saldoAtual) - Math.abs(composicao);
-      const computedStatus: Conta['status'] = Math.abs(diferenca) < 0.01
+      // Contas bancárias e aplicações financeiras são conciliadas pelo extrato
+      // bancário, fora do sistema — entram sempre como CONCILIADAS.
+      const bancaria = isContaBancariaOuAplicacao(balancete.codigo, balancete.descricao);
+      const computedStatus: Conta['status'] = bancaria || Math.abs(diferenca) < 0.01
         ? 'CONCILIADO'
         : stored?.status === 'EM_ANALISE'
           ? 'EM_ANALISE'
@@ -330,6 +334,7 @@ export function Status() {
         composicao,
         diferenca,
         status: computedStatus,
+        conciliadoPorRegra: bancaria,
         documentos: stored?.documentos ?? [],
         movimentacoes,
         createdAt: stored?.createdAt ?? new Date(),
@@ -403,10 +408,18 @@ export function Status() {
     });
   }, [processedContas, searchTerm, statusFilter, naturezaFilter]);
 
-  const getStatusBadge = (status: Conta['status']) => {
+  const getStatusBadge = (status: Conta['status'], conciliadoPorRegra?: boolean) => {
     switch (status) {
       case 'CONCILIADO':
-        return <Badge variant="default" className="bg-success text-success-foreground">Conciliado</Badge>;
+        return (
+          <Badge
+            variant="default"
+            className="bg-success text-success-foreground"
+            title={conciliadoPorRegra ? 'Conta bancária/aplicação — conciliada pelo extrato bancário' : undefined}
+          >
+            Conciliado{conciliadoPorRegra ? ' (banco)' : ''}
+          </Badge>
+        );
       case 'EM_ANALISE':
         return <Badge variant="default" className="bg-warning text-warning-foreground">Em Análise</Badge>;
       default:
@@ -1092,7 +1105,7 @@ export function Status() {
                       })}
                     </TableCell>
                     <TableCell>
-                      {getStatusBadge(conta.status)}
+                      {getStatusBadge(conta.status, conta.conciliadoPorRegra)}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">

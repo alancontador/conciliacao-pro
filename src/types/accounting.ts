@@ -6,6 +6,9 @@ export interface Conta {
   composicao: number;
   diferenca: number;
   status: 'CONCILIADO' | 'NAO_CONCILIADO' | 'EM_ANALISE';
+  /** true quando o status veio da regra automática (conta bancária/aplicação),
+   *  e não do casamento balancete × razão. */
+  conciliadoPorRegra?: boolean;
   documentos: Documento[];
   prazoRegularizacao?: Date;
   observacoes?: string;
