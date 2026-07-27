@@ -7,14 +7,10 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Calendar } from '@/components/ui/calendar';
-import { Building2, Plus, Pencil, Trash2, Search, CheckCircle2, ChevronRight, CalendarDays } from 'lucide-react';
+import { Building2, Plus, Pencil, Trash2, Search, CheckCircle2, ChevronRight } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type { Empresa } from '@/types/empresa';
 import { cn } from '@/lib/utils';
-import { type DateRange } from 'react-day-picker';
-import { ptBR } from 'date-fns/locale';
 
 function initials(nome: string) {
   return nome
@@ -43,26 +39,10 @@ function formatPhone(v: string) {
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
 
-function parsePeriodo(s: string): DateRange | undefined {
-  if (!s) return undefined;
-  const parts = s.split(' - ');
-  if (parts.length !== 2) return undefined;
-  const parseDate = (str: string) => {
-    const [dd, mm, yyyy] = str.trim().split('/').map(Number);
-    if (!dd || !mm || !yyyy) return undefined;
-    const d = new Date(yyyy, mm - 1, dd);
-    return isNaN(d.getTime()) ? undefined : d;
-  };
-  const from = parseDate(parts[0]);
-  const to = parseDate(parts[1]);
-  return from && to ? { from, to } : undefined;
-}
-
 const EMPTY_FORM = {
   razaoSocial: '',
   nomeFantasia: '',
   cnpj: '',
-  periodo: '',
   responsavel: '',
   email: '',
   telefone: '',
@@ -81,8 +61,6 @@ export function Empresas() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState({ ...EMPTY_FORM });
-  const [periodoRange, setPeriodoRange] = useState<DateRange | undefined>();
-  const [periodoOpen, setPeriodoOpen] = useState(false);
 
   const filtered = empresas.filter(
     (e) =>
@@ -96,7 +74,6 @@ export function Empresas() {
   const openCreate = () => {
     setEditId(null);
     setForm({ ...EMPTY_FORM });
-    setPeriodoRange(undefined);
     setDialogOpen(true);
   };
 
@@ -106,25 +83,12 @@ export function Empresas() {
       razaoSocial: e.razaoSocial,
       nomeFantasia: e.nomeFantasia ?? '',
       cnpj: e.cnpj,
-      periodo: e.periodo,
       responsavel: e.responsavel,
       email: e.email ?? '',
       telefone: e.telefone ?? '',
       ativa: e.ativa,
     });
-    setPeriodoRange(parsePeriodo(e.periodo));
     setDialogOpen(true);
-  };
-
-  const handlePeriodoSelect = (range: DateRange | undefined) => {
-    setPeriodoRange(range);
-    if (range?.from && range?.to) {
-      const fmt = (d: Date) => d.toLocaleDateString('pt-BR');
-      setForm((p) => ({ ...p, periodo: `${fmt(range.from!)} - ${fmt(range.to!)}` }));
-      setPeriodoOpen(false);
-    } else if (!range?.from) {
-      setForm((p) => ({ ...p, periodo: '' }));
-    }
   };
 
   const handleSave = () => {
@@ -142,7 +106,6 @@ export function Empresas() {
         razaoSocial: form.razaoSocial.trim(),
         nomeFantasia: form.nomeFantasia.trim() || undefined,
         cnpj: form.cnpj.trim(),
-        periodo: form.periodo.trim(),
         responsavel: form.responsavel.trim(),
         email: form.email.trim() || undefined,
         telefone: form.telefone.trim() || undefined,
@@ -150,11 +113,10 @@ export function Empresas() {
       });
       toast({ title: 'Empresa atualizada' });
     } else {
-      const id = addEmpresa({
+      addEmpresa({
         razaoSocial: form.razaoSocial.trim(),
         nomeFantasia: form.nomeFantasia.trim() || undefined,
         cnpj: form.cnpj.trim(),
-        periodo: form.periodo.trim(),
         responsavel: form.responsavel.trim(),
         email: form.email.trim() || undefined,
         telefone: form.telefone.trim() || undefined,
@@ -288,9 +250,6 @@ export function Empresas() {
                           Resp.: {empresa.responsavel}
                         </p>
                       )}
-                      {empresa.periodo && (
-                        <p className="text-xs text-muted-foreground">Período: {empresa.periodo}</p>
-                      )}
                     </div>
 
                     {/* Ações */}
@@ -359,42 +318,14 @@ export function Empresas() {
                 onChange={(e) => setForm((p) => ({ ...p, nomeFantasia: e.target.value }))}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label>CNPJ <span className="text-destructive">*</span></Label>
-                <Input
-                  placeholder="00.000.000/0000-00"
-                  value={form.cnpj}
-                  onChange={(e) => setForm((p) => ({ ...p, cnpj: formatCNPJ(e.target.value) }))}
-                  maxLength={18}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>Período</Label>
-                <Popover open={periodoOpen} onOpenChange={setPeriodoOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        'w-full justify-start text-left font-normal h-10',
-                        !form.periodo && 'text-muted-foreground',
-                      )}
-                    >
-                      <CalendarDays className="mr-2 h-4 w-4 shrink-0" />
-                      <span className="truncate">{form.periodo || 'Selecionar período'}</span>
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start" side="bottom">
-                    <Calendar
-                      mode="range"
-                      selected={periodoRange}
-                      onSelect={handlePeriodoSelect}
-                      numberOfMonths={2}
-                      locale={ptBR}
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
+            <div className="space-y-1">
+              <Label>CNPJ <span className="text-destructive">*</span></Label>
+              <Input
+                placeholder="00.000.000/0000-00"
+                value={form.cnpj}
+                onChange={(e) => setForm((p) => ({ ...p, cnpj: formatCNPJ(e.target.value) }))}
+                maxLength={18}
+              />
             </div>
             <div className="space-y-1">
               <Label>Responsável / Contador</Label>

@@ -45,7 +45,6 @@ export interface DbEmpresa {
   razao_social: string;
   nome_fantasia: string | null;
   cnpj: string | null;
-  periodo: string | null;
   responsavel: string | null;
   email: string | null;
   telefone: string | null;
@@ -54,10 +53,24 @@ export interface DbEmpresa {
   atualizado_em: string;
 }
 
+export interface DbCompetencia {
+  id: string;
+  tenant_id: string;
+  empresa_id: string;
+  competencia: string;
+  status: string;
+  concluida_em: string | null;
+  concluida_por: string | null;
+  kpis_snapshot: unknown | null;
+  criado_em: string;
+  atualizado_em: string;
+}
+
 export interface DbConta {
   id: string;
   empresa_id: string;
   tenant_id: string;
+  competencia: string;
   numero: string;
   descricao: string | null;
   natureza: string | null;
@@ -72,6 +85,7 @@ export interface DbDadosEmpresa {
   id: string;
   empresa_id: string;
   tenant_id: string;
+  competencia: string;
   balancete_data: unknown[];
   razao_data: unknown[];
   reconciled_indices: number[];
@@ -103,6 +117,7 @@ export interface DbConciliacaoAuditoria {
   id: string;
   tenant_id: string;
   empresa_id: string;
+  competencia: string | null;
   conta_numero: string;
   lancamentos: AuditoriaLancamentoSnapshot[];
   score: number;

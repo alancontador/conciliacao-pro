@@ -28,7 +28,9 @@ import {
   Paperclip,
   Sparkles,
   RotateCcw,
+  Lock,
 } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -39,10 +41,12 @@ import type { Conta, RazaoRow, Documento } from '@/types/accounting';
 import { Workbook } from 'exceljs';
 import { generateCandidates } from '@/lib/reconciliation/engine';
 import type { ReconciliationCandidate } from '@/lib/reconciliation/types';
+import { formatCompetencia } from '@/lib/competencia';
 import { isContaBancariaOuAplicacao } from '@/lib/conta-classificacao';
 
 export function Status() {
-  const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, updateConta, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions, logConciliacaoAuditoria, resetEmpresaData, currentUser, empresas, selectedEmpresaId } = useAccountingStore();
+  const { contas, balanceteData, razaoData, setRazaoData, updateRazaoTransaction, deleteRazaoTransaction, reconcileAccount, updateConta, setContas, reconciledRazaoIndices, reconcileRazaoTransactions, unreconcileRazaoTransactions, logConciliacaoAuditoria, resetEmpresaData, currentUser, empresas, selectedEmpresaId, selectedCompetencia, isCompetenciaReadonly } = useAccountingStore();
+  const readOnly = isCompetenciaReadonly();
   const [searchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') ?? 'all');
@@ -287,15 +291,24 @@ export function Status() {
   const processedContas = useMemo(() => {
     if (balanceteData.length === 0) return contas;
 
+    // Índices O(1): agrupa lançamentos do razão por conta e contas persistidas por
+    // número — evita a varredura O(contas × razão) que congelava competências grandes.
+    const movsByConta = new Map<string, { razao: RazaoRow; globalIdx: number }[]>();
+    razaoData.forEach((razao, globalIdx) => {
+      const key = (razao.conta ?? '').trim();
+      if (!key) return;
+      const arr = movsByConta.get(key);
+      if (arr) arr.push({ razao, globalIdx }); else movsByConta.set(key, [{ razao, globalIdx }]);
+    });
+    const storedByNumero = new Map(contas.map(c => [c.numero, c]));
+
     return balanceteData
       .filter(balancete => Math.abs(balancete.saldoAtual) >= 0.01)
       .map(balancete => {
-      const stored = contas.find(c => c.numero === balancete.codigo);
+      const stored = storedByNumero.get(balancete.codigo);
 
       let saldoPendente = 0;
-      const movimentacoes = razaoData
-        .map((razao, globalIdx) => ({ razao, globalIdx }))
-        .filter(({ razao }) => razao.conta.trim() === balancete.codigo.trim())
+      const movimentacoes = (movsByConta.get(balancete.codigo.trim()) ?? [])
         .map(({ razao, globalIdx }, index) => {
           if (!reconciledSet.has(globalIdx)) {
             saldoPendente += balancete.natureza === 'ATIVO'
@@ -460,7 +473,7 @@ export function Status() {
       empresa ? `Empresa: ${nomeEmpresa}` : '',
       `Gerado em: ${new Date().toLocaleString('pt-BR')}`,
       empresa?.cnpj ? `CNPJ: ${empresa.cnpj}` : '',
-      empresa?.periodo ? `Período: ${empresa.periodo}` : '',
+      selectedCompetencia ? `Competência: ${formatCompetencia(selectedCompetencia)}` : '',
     ].filter(Boolean) as string[];
 
     infoLines.forEach((line, i) => {
@@ -626,6 +639,16 @@ export function Status() {
         </p>
       </div>
 
+      {readOnly && (
+        <Alert className="border-amber-400 bg-amber-50 dark:bg-amber-950/40">
+          <Lock className="h-4 w-4 text-amber-600" />
+          <AlertDescription className="text-amber-800 dark:text-amber-200">
+            Competência <strong>{formatCompetencia(selectedCompetencia ?? '')}</strong> concluída — somente leitura para
+            auditoria. Para editar, reabra a competência no seletor <strong>Período de análise</strong> no topo.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Filters and Actions */}
       <Card>
         <CardHeader>
@@ -676,7 +699,7 @@ export function Status() {
               Exportar Excel
             </Button>
 
-            {canManage && (
+            {canManage && !readOnly && (
               <AlertDialog open={showResetDialog} onOpenChange={setShowResetDialog}>
                 <AlertDialogTrigger asChild>
                   <Button variant="outline" className="text-destructive hover:text-destructive border-destructive/30 hover:border-destructive">
@@ -792,6 +815,7 @@ export function Status() {
                   <Button
                     size="sm"
                     variant="outline"
+                    disabled={readOnly}
                     onClick={() => { setShowManualForm(p => !p); setShowReconciled(false); }}
                     className="border-blue-400 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-blue-950 dark:hover:text-blue-200"
                   >
@@ -801,6 +825,7 @@ export function Status() {
                   <Button
                     size="sm"
                     variant="outline"
+                    disabled={readOnly}
                     onClick={handleSuggestReconciliation}
                     className="border-purple-400 text-purple-600 hover:bg-purple-50 hover:text-purple-700 dark:hover:bg-purple-950 dark:hover:text-purple-200"
                   >
@@ -822,7 +847,7 @@ export function Status() {
                   {!showReconciled ? (
                     <Button
                       size="sm"
-                      disabled={!selectionInfo.balanced}
+                      disabled={!selectionInfo.balanced || readOnly}
                       onClick={handleReconcileSelected}
                       className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-40"
                     >
@@ -833,7 +858,7 @@ export function Status() {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={selectedGlobalIndices.size === 0}
+                      disabled={selectedGlobalIndices.size === 0 || readOnly}
                       onClick={handleUnreconcileSelected}
                       className="border-orange-400 text-orange-600 hover:bg-orange-50 hover:text-orange-700 dark:hover:bg-orange-950 dark:hover:text-orange-200 disabled:opacity-40"
                     >
@@ -944,7 +969,7 @@ export function Status() {
                                 })()}
                               </TableCell>
                               <TableCell>
-                                {mov.isManual && (
+                                {!readOnly && mov.isManual && (
                                   <div className="flex gap-0.5">
                                     <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground" onClick={() => handleStartEdit(mov.globalIdx)} title="Editar">
                                       <Pencil className="w-3 h-3" />
@@ -1126,24 +1151,32 @@ export function Status() {
                                       onClick={() => { const a = document.createElement('a'); a.href = doc.url; a.download = doc.nome; a.click(); }}>
                                       <Download className="w-3 h-3" />
                                     </Button>
-                                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive hover:text-destructive" title="Remover"
-                                      onClick={() => handleRemoveDoc(conta.numero, doc.id)}>
-                                      <Trash2 className="w-3 h-3" />
-                                    </Button>
+                                    {!readOnly && (
+                                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive hover:text-destructive" title="Remover"
+                                        onClick={() => handleRemoveDoc(conta.numero, doc.id)}>
+                                        <Trash2 className="w-3 h-3" />
+                                      </Button>
+                                    )}
                                   </div>
                                 </DropdownMenuItem>
                               ))}
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem onSelect={e => { e.preventDefault(); handleAttachClick(conta.numero); }}>
-                                <Paperclip className="w-3 h-3 mr-2" />
-                                <span className="text-xs">Anexar outro arquivo</span>
-                              </DropdownMenuItem>
+                              {!readOnly && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem onSelect={e => { e.preventDefault(); handleAttachClick(conta.numero); }}>
+                                    <Paperclip className="w-3 h-3 mr-2" />
+                                    <span className="text-xs">Anexar outro arquivo</span>
+                                  </DropdownMenuItem>
+                                </>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
-                        ) : (
+                        ) : !readOnly ? (
                           <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-foreground" onClick={() => handleAttachClick(conta.numero)} title="Anexar documento">
                             <Paperclip className="w-4 h-4" />
                           </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </div>
                     </TableCell>
@@ -1152,8 +1185,8 @@ export function Status() {
                         <Button variant="ghost" size="sm" onClick={() => setSelectedConta(conta)}>
                           <Eye className="w-4 h-4" />
                         </Button>
-                        
-                        {conta.status !== 'CONCILIADO' && (
+
+                        {!readOnly && conta.status !== 'CONCILIADO' && (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -1165,7 +1198,7 @@ export function Status() {
                           </Button>
                         )}
 
-                        {conta.status !== 'EM_ANALISE' && (
+                        {!readOnly && conta.status !== 'EM_ANALISE' && (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -1177,7 +1210,7 @@ export function Status() {
                           </Button>
                         )}
 
-                        {conta.status !== 'NAO_CONCILIADO' && (
+                        {!readOnly && conta.status !== 'NAO_CONCILIADO' && (
                           <Button
                             variant="ghost"
                             size="sm"

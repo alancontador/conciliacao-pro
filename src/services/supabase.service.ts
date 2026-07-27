@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
-import type { DbProfile, DbEmpresa, DbConta, DbDadosEmpresa, DbConvite } from '@/lib/supabase';
+import type { DbProfile, DbEmpresa, DbConta, DbDadosEmpresa, DbConvite, DbCompetencia } from '@/lib/supabase';
+import type { KPIData } from '@/types/accounting';
 import type { Empresa } from '@/types/empresa';
 import type { Usuario, PermissoesUsuario } from '@/types/usuario';
 import type { Conta, BalanceteRow, RazaoRow, ImportHistory } from '@/types/accounting';
@@ -227,7 +228,6 @@ export async function insertEmpresa(
       razao_social: e.razaoSocial,
       nome_fantasia: e.nomeFantasia ?? null,
       cnpj: e.cnpj,
-      periodo: e.periodo,
       responsavel: e.responsavel,
       email: e.email ?? null,
       telefone: e.telefone ?? null,
@@ -246,7 +246,6 @@ export async function updateEmpresaDb(id: string, updates: Partial<Omit<Empresa,
       razao_social: updates.razaoSocial,
       nome_fantasia: updates.nomeFantasia ?? null,
       cnpj: updates.cnpj,
-      periodo: updates.periodo,
       responsavel: updates.responsavel,
       email: updates.email ?? null,
       telefone: updates.telefone ?? null,
@@ -261,21 +260,90 @@ export async function deleteEmpresaDb(id: string) {
   if (error) throw error;
 }
 
-// ── Contas ────────────────────────────────────────────────────────────────────
+// ── Competências ──────────────────────────────────────────────────────────────
 
-export async function loadContas(empresaId: string): Promise<DbConta[]> {
+export async function loadCompetencias(empresaId: string): Promise<DbCompetencia[]> {
   const { data } = await supabase
-    .from('contas')
+    .from('competencias')
     .select('*')
-    .eq('empresa_id', empresaId);
+    .eq('empresa_id', empresaId)
+    .order('competencia', { ascending: false });
   return data ?? [];
 }
 
-export async function upsertContas(tenantId: string, empresaId: string, contas: Conta[]) {
+// Cria a competência se ainda não existir; retorna a linha existente ou criada.
+export async function ensureCompetencia(
+  tenantId: string,
+  empresaId: string,
+  competencia: string,
+): Promise<DbCompetencia> {
+  const { data, error } = await supabase
+    .from('competencias')
+    .upsert(
+      { tenant_id: tenantId, empresa_id: empresaId, competencia },
+      { onConflict: 'empresa_id,competencia', ignoreDuplicates: true },
+    )
+    .select()
+    .maybeSingle();
+  if (error) throw error;
+  if (data) return data;
+
+  // ignoreDuplicates não retorna a linha existente — busca-a.
+  const { data: existing, error: selErr } = await supabase
+    .from('competencias')
+    .select('*')
+    .eq('empresa_id', empresaId)
+    .eq('competencia', competencia)
+    .single();
+  if (selErr || !existing) throw selErr ?? new Error('Erro ao carregar competência');
+  return existing;
+}
+
+export async function updateCompetenciaStatus(
+  empresaId: string,
+  competencia: string,
+  status: 'EM_ANDAMENTO' | 'CONCLUIDA',
+  opts: { concluidaPor?: string | null; kpisSnapshot?: KPIData | null } = {},
+) {
+  const payload: Record<string, unknown> = { status };
+  if (status === 'CONCLUIDA') {
+    payload.concluida_em = new Date().toISOString();
+    payload.concluida_por = opts.concluidaPor ?? null;
+    if (opts.kpisSnapshot !== undefined) payload.kpis_snapshot = opts.kpisSnapshot;
+  } else {
+    payload.concluida_em = null;
+    payload.concluida_por = null;
+  }
+  const { error } = await supabase
+    .from('competencias')
+    .update(payload)
+    .eq('empresa_id', empresaId)
+    .eq('competencia', competencia);
+  if (error) throw error;
+}
+
+// ── Contas ────────────────────────────────────────────────────────────────────
+
+export async function loadContas(empresaId: string, competencia: string): Promise<DbConta[]> {
+  const { data } = await supabase
+    .from('contas')
+    .select('*')
+    .eq('empresa_id', empresaId)
+    .eq('competencia', competencia);
+  return data ?? [];
+}
+
+export async function upsertContas(
+  tenantId: string,
+  empresaId: string,
+  competencia: string,
+  contas: Conta[],
+) {
   if (!contas.length) return;
   const rows = contas.map((c) => ({
     empresa_id: empresaId,
     tenant_id: tenantId,
+    competencia,
     numero: c.numero,
     descricao: c.descricao,
     natureza: c.natureza,
@@ -285,33 +353,44 @@ export async function upsertContas(tenantId: string, empresaId: string, contas: 
   }));
   const { error } = await supabase
     .from('contas')
-    .upsert(rows, { onConflict: 'empresa_id,numero' });
+    .upsert(rows, { onConflict: 'empresa_id,competencia,numero' });
   if (error) throw error;
 }
 
-export async function updateContaStatus(empresaId: string, numero: string, status: string) {
+export async function updateContaStatus(
+  empresaId: string,
+  competencia: string,
+  numero: string,
+  status: string,
+) {
   const { error } = await supabase
     .from('contas')
     .update({ status })
     .eq('empresa_id', empresaId)
+    .eq('competencia', competencia)
     .eq('numero', numero);
   if (error) throw error;
 }
 
 // ── Dados Empresa (balancete + razão como JSONB) ──────────────────────────────
 
-export async function loadDadosEmpresa(empresaId: string): Promise<DbDadosEmpresa | null> {
+export async function loadDadosEmpresa(
+  empresaId: string,
+  competencia: string,
+): Promise<DbDadosEmpresa | null> {
   const { data } = await supabase
     .from('dados_empresa')
     .select('*')
     .eq('empresa_id', empresaId)
-    .single();
+    .eq('competencia', competencia)
+    .maybeSingle();
   return data;
 }
 
 export async function upsertDadosEmpresa(
   tenantId: string,
   empresaId: string,
+  competencia: string,
   dados: {
     balanceteData?: BalanceteRow[];
     razaoData?: RazaoRow[];
@@ -323,11 +402,13 @@ export async function upsertDadosEmpresa(
     .from('dados_empresa')
     .select('id')
     .eq('empresa_id', empresaId)
-    .single();
+    .eq('competencia', competencia)
+    .maybeSingle();
 
   const payload: Record<string, unknown> = {
     empresa_id: empresaId,
     tenant_id: tenantId,
+    competencia,
   };
   if (dados.balanceteData !== undefined) payload.balancete_data = dados.balanceteData;
   if (dados.razaoData !== undefined) payload.razao_data = dados.razaoData;
@@ -338,7 +419,8 @@ export async function upsertDadosEmpresa(
     const { error } = await supabase
       .from('dados_empresa')
       .update(payload)
-      .eq('empresa_id', empresaId);
+      .eq('empresa_id', empresaId)
+      .eq('competencia', competencia);
     if (error) throw error;
   } else {
     const { error } = await supabase.from('dados_empresa').insert(payload);
@@ -351,6 +433,7 @@ export async function upsertDadosEmpresa(
 export async function insertConciliacaoAuditoria(params: {
   tenantId: string;
   empresaId: string;
+  competencia: string;
   contaNumero: string;
   lancamentos: { data: string; lote: string; historico: string; valor: number }[];
   score: number;
@@ -360,6 +443,7 @@ export async function insertConciliacaoAuditoria(params: {
   const { error } = await supabase.from('conciliacoes_auditoria').insert({
     tenant_id: params.tenantId,
     empresa_id: params.empresaId,
+    competencia: params.competencia,
     conta_numero: params.contaNumero,
     lancamentos: params.lancamentos,
     score: params.score,

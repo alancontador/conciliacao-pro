@@ -3,7 +3,6 @@ export interface Empresa {
   razaoSocial: string;
   nomeFantasia?: string;
   cnpj: string;
-  periodo: string;
   responsavel: string;
   email?: string;
   telefone?: string;

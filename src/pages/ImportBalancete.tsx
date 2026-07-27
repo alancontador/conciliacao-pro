@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useAccountingStore } from '@/store/accounting';
 import { logger } from '@/lib/logger';
 import { parseXlsxInWorker } from '@/lib/parse-xlsx';
+import { formatCompetencia } from '@/lib/competencia';
 import { AlertCircle, CheckCircle, FileSpreadsheet, Info } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -231,7 +232,8 @@ export function ImportBalancete() {
     [previewData, startIdx, endIdx]
   );
 
-  const { setBalanceteData, addImportHistory, currentUser, selectedEmpresaId } = useAccountingStore();
+  const { setBalanceteData, addImportHistory, currentUser, selectedEmpresaId, selectedCompetencia, isCompetenciaReadonly } = useAccountingStore();
+  const readOnly = isCompetenciaReadonly();
   const { toast } = useToast();
   const log = logger.withContext({ userId: currentUser?.id, empresaId: selectedEmpresaId ?? undefined, action: 'import-balancete' });
 
@@ -311,6 +313,14 @@ export function ImportBalancete() {
 
   const handleImport = async () => {
     if (!file || !importStats) return;
+    if (readOnly) {
+      toast({
+        title: 'Competência concluída',
+        description: 'Reabra a competência no seletor "Período de análise" para importar dados.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     try {
       setIsLoading(true);
@@ -380,8 +390,19 @@ export function ImportBalancete() {
         <h1 className="text-3xl font-bold text-foreground">Importar Balancete</h1>
         <p className="text-muted-foreground">
           Importe os dados do balancete a partir de arquivos Excel (.xlsx, .xls)
+          {selectedCompetencia && <> — competência <strong>{formatCompetencia(selectedCompetencia)}</strong></>}
         </p>
       </div>
+
+      {readOnly && (
+        <Alert className="border-amber-400 bg-amber-50 dark:bg-amber-950/40">
+          <AlertCircle className="h-4 w-4 text-amber-600" />
+          <AlertDescription className="text-amber-800 dark:text-amber-200">
+            A competência {formatCompetencia(selectedCompetencia ?? '')} está concluída (somente leitura). Reabra-a no
+            seletor <strong>Período de análise</strong> para importar dados.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Config */}
       <Card>
@@ -598,7 +619,7 @@ export function ImportBalancete() {
             </div>
 
             <div className="flex justify-end mt-4">
-              <Button onClick={handleImport} disabled={isLoading} className="min-w-32">
+              <Button onClick={handleImport} disabled={isLoading || readOnly} className="min-w-32">
                 {isLoading ? 'Importando...' : 'Confirmar Importação'}
               </Button>
             </div>

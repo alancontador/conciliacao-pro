@@ -3,13 +3,17 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import type { Conta, BalanceteRow, RazaoRow, ImportHistory, CompanyInfo, KPIData } from '@/types/accounting';
 import type { Usuario, PermissoesUsuario } from '@/types/usuario';
 import type { Empresa } from '@/types/empresa';
+import type { Competencia, CompetenciaStatus } from '@/types/competencia';
 import * as svc from '@/services/supabase.service';
+import type { DbCompetencia } from '@/lib/supabase';
 import { supabase } from '@/lib/supabase';
 import type { MatchReasons } from '@/lib/reconciliation/types';
 import { computeTextScore } from '@/lib/reconciliation/text';
+import { currentCompetencia } from '@/lib/competencia';
+import { isContaBancariaOuAplicacao } from '@/lib/conta-classificacao';
 import { logger } from '@/lib/logger';
 
-// ── Dados por empresa (cache local) ──────────────────────────────────────────
+// ── Dados por (empresa + competência) — cache local ───────────────────────────
 
 interface EmpresaDados {
   companyInfo: CompanyInfo;
@@ -21,21 +25,48 @@ interface EmpresaDados {
 }
 
 const emptyDados: EmpresaDados = {
-  companyInfo: { nome: '', cnpj: '', periodo: '', responsavel: '' },
+  companyInfo: { nome: '', cnpj: '', responsavel: '' },
   contas: [], balanceteData: [], razaoData: [], importHistory: [], reconciledRazaoIndices: [],
 };
 
+// Chave composta do escopo ativo. Cada (empresa, competência) tem dados isolados.
+function scopeKey(empresaId: string, competencia: string): string {
+  return `${empresaId}::${competencia}`;
+}
+
+function mapDbCompetencia(c: DbCompetencia): Competencia {
+  return {
+    id: c.id,
+    empresaId: c.empresa_id,
+    competencia: c.competencia,
+    status: (c.status as CompetenciaStatus) ?? 'EM_ANDAMENTO',
+    concluidaEm: c.concluida_em ? new Date(c.concluida_em) : undefined,
+    concluidaPor: c.concluida_por ?? undefined,
+    kpisSnapshot: (c.kpis_snapshot as KPIData | null) ?? undefined,
+    createdAt: new Date(c.criado_em),
+    updatedAt: new Date(c.atualizado_em),
+  };
+}
+
+// Aplica um patch aos campos ativos E ao cache do escopo (empresa+competência) corrente.
 function sync(
-  state: { selectedEmpresaId: string | null; dadosPorEmpresa: Record<string, EmpresaDados> },
+  state: {
+    selectedEmpresaId: string | null;
+    selectedCompetencia: string | null;
+    dadosPorChave: Record<string, EmpresaDados>;
+  },
   updates: Partial<EmpresaDados>,
 ) {
-  if (!state.selectedEmpresaId) return updates as Record<string, unknown>;
+  if (!state.selectedEmpresaId || !state.selectedCompetencia) {
+    return updates as Record<string, unknown>;
+  }
+  const key = scopeKey(state.selectedEmpresaId, state.selectedCompetencia);
   return {
     ...updates,
-    dadosPorEmpresa: {
-      ...state.dadosPorEmpresa,
-      [state.selectedEmpresaId]: {
-        ...(state.dadosPorEmpresa[state.selectedEmpresaId] ?? emptyDados),
+    dadosPorChave: {
+      ...state.dadosPorChave,
+      [key]: {
+        ...(state.dadosPorChave[key] ?? emptyDados),
         ...updates,
       },
     },
@@ -50,7 +81,7 @@ interface AccountingState {
   currentUser: Usuario | null;
   isInitialized: boolean;
 
-  // Campos ativos (empresa selecionada)
+  // Campos ativos (empresa + competência selecionadas)
   companyInfo: CompanyInfo;
   contas: Conta[];
   balanceteData: BalanceteRow[];
@@ -61,7 +92,14 @@ interface AccountingState {
   // Multi-empresa
   empresas: Empresa[];
   selectedEmpresaId: string | null;
-  dadosPorEmpresa: Record<string, EmpresaDados>;
+
+  // Competências (da empresa selecionada)
+  competencias: Competencia[];
+  selectedCompetencia: string | null;             // 'AAAA-MM'
+  selectedCompetenciaStatus: CompetenciaStatus | null;
+
+  // Cache offline por (empresa+competência)
+  dadosPorChave: Record<string, EmpresaDados>;
 
   // Usuários (cache local)
   usuarios: Usuario[];
@@ -103,6 +141,8 @@ interface AccountingState {
     criterios: MatchReasons;
   }) => Promise<void>;
   calculateKPIs: () => KPIData;
+  getProcessedContas: () => Conta[];
+  isCompetenciaReadonly: () => boolean;
 
   // Empresas
   addEmpresa: (e: Omit<Empresa, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
@@ -110,11 +150,88 @@ interface AccountingState {
   deleteEmpresa: (id: string) => Promise<void>;
   selectEmpresa: (id: string) => Promise<void>;
 
+  // Competências
+  selectCompetencia: (competencia: string) => Promise<void>;
+  criarCompetencia: (competencia: string) => Promise<void>;
+  concluirConciliacao: () => Promise<void>;
+  reabrirCompetencia: () => Promise<void>;
+
+  // Internos de escopo
+  _saveCurrentScope: () => void;
+  _loadScopeData: (empresaId: string, competencia: string) => Promise<void>;
+
   // Usuários
   addUsuario: (u: Omit<Usuario, 'id' | 'createdAt' | 'updatedAt'>, email: string) => Promise<string>;
   updateUsuario: (id: string, updates: Partial<Omit<Usuario, 'id' | 'createdAt'>>) => Promise<void>;
   deleteUsuario: (id: string) => Promise<void>;
   requestPasswordReset_user: (email: string) => Promise<void>;
+}
+
+// ── Fila de gravações por escopo ──────────────────────────────────────────────
+// As gravações ao Supabase são assíncronas (fire-and-forget). Ao trocar de
+// competência, _loadScopeData recarrega do Supabase — se a última gravação ainda
+// não terminou, ele leria dados desatualizados (corrida read-after-write).
+// Solução: serializar as gravações por escopo (empresa+competência) e permitir
+// aguardar as pendentes antes de recarregar aquele escopo.
+
+const pendingScopeWrites = new Map<string, Promise<void>>();
+
+function trackWrite(key: string, run: () => Promise<unknown>): Promise<void> {
+  const prev = pendingScopeWrites.get(key) ?? Promise.resolve();
+  const next = prev.catch(() => {}).then(() => run()).then(() => undefined, () => undefined);
+  pendingScopeWrites.set(key, next);
+  void next.finally(() => {
+    if (pendingScopeWrites.get(key) === next) pendingScopeWrites.delete(key);
+  });
+  return next;
+}
+
+async function awaitScopeWrites(key: string): Promise<void> {
+  const p = pendingScopeWrites.get(key);
+  if (!p) return;
+  // Nunca bloqueia a navegação por mais de 4s: se uma gravação ficar presa na rede,
+  // seguimos e carregamos o que houver (a gravação continua em segundo plano).
+  await Promise.race([p, new Promise<void>((resolve) => setTimeout(resolve, 4000))]);
+}
+
+interface ScopeIds { tenantId: string; empresaId: string; competencia: string }
+
+// Executa uma gravação no escopo (empresa+competência) ATIVO NO MOMENTO DA CHAMADA,
+// serializada e rastreada. Os ids são capturados agora — não quando a gravação roda —
+// pois o usuário pode ter trocado de escopo até lá.
+function scopeWrite(
+  get: () => AccountingState,
+  run: (ids: ScopeIds) => Promise<unknown>,
+  action: string,
+  ctxData?: Record<string, unknown>,
+) {
+  const { tenantId, selectedEmpresaId, selectedCompetencia, currentUser } = get();
+  if (!tenantId || !selectedEmpresaId || !selectedCompetencia) return;
+  const ids: ScopeIds = { tenantId, empresaId: selectedEmpresaId, competencia: selectedCompetencia };
+  const key = scopeKey(selectedEmpresaId, selectedCompetencia);
+  trackWrite(key, () =>
+    run(ids).catch((error) => {
+      logger.error(`store/${action}-failed`, {
+        context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action, data: ctxData },
+        error,
+      });
+    }),
+  );
+}
+
+// Persiste um patch de dados (balancete/razão/conciliados/histórico) no escopo ativo.
+function persistDados(
+  get: () => AccountingState,
+  patch: {
+    balanceteData?: BalanceteRow[];
+    razaoData?: RazaoRow[];
+    reconciledIndices?: number[];
+    importHistory?: ImportHistory[];
+  },
+  action: string,
+) {
+  scopeWrite(get, ({ tenantId, empresaId, competencia }) =>
+    svc.upsertDadosEmpresa(tenantId, empresaId, competencia, patch), action);
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -126,7 +243,7 @@ export const useAccountingStore = create<AccountingState>()(
       currentUser: null,
       isInitialized: false,
 
-      companyInfo: { nome: '', cnpj: '', periodo: '', responsavel: '' },
+      companyInfo: { nome: '', cnpj: '', responsavel: '' },
       contas: [],
       balanceteData: [],
       razaoData: [],
@@ -134,7 +251,10 @@ export const useAccountingStore = create<AccountingState>()(
       reconciledRazaoIndices: [],
       empresas: [],
       selectedEmpresaId: null,
-      dadosPorEmpresa: {},
+      competencias: [],
+      selectedCompetencia: null,
+      selectedCompetenciaStatus: null,
+      dadosPorChave: {},
       usuarios: [],
       prazoMedioRegularizacao: 15,
 
@@ -146,11 +266,7 @@ export const useAccountingStore = create<AccountingState>()(
           set({ isInitialized: true });
           return;
         }
-        await get().loadTenantData(
-          // tenantId será carregado dentro de loadTenantData via profile
-          '',
-          session.user.id,
-        );
+        await get().loadTenantData('', session.user.id);
       },
 
       loadTenantData: async (_tenantId, userId) => {
@@ -170,7 +286,6 @@ export const useAccountingStore = create<AccountingState>()(
             updatedAt: new Date(profile.atualizado_em),
           };
 
-          // Carrega empresas e usuários do tenant
           const [dbEmpresas, dbUsuarios] = await Promise.all([
             svc.loadEmpresas(tenantId),
             svc.loadUsuarios(tenantId),
@@ -181,7 +296,6 @@ export const useAccountingStore = create<AccountingState>()(
             razaoSocial: e.razao_social,
             nomeFantasia: e.nome_fantasia ?? undefined,
             cnpj: e.cnpj ?? '',
-            periodo: e.periodo ?? '',
             responsavel: e.responsavel ?? '',
             email: e.email ?? undefined,
             telefone: e.telefone ?? undefined,
@@ -201,10 +315,11 @@ export const useAccountingStore = create<AccountingState>()(
             updatedAt: new Date(p.atualizado_em),
           }));
 
-          // Seleciona a primeira empresa ativa por padrão
           const { selectedEmpresaId } = get();
           const primeiraEmpresa = empresas.find((e) => e.ativa);
-          const empresaParaCarregar = selectedEmpresaId ?? primeiraEmpresa?.id ?? null;
+          const empresaParaCarregar = (selectedEmpresaId && empresas.some((e) => e.id === selectedEmpresaId))
+            ? selectedEmpresaId
+            : primeiraEmpresa?.id ?? null;
 
           set({ tenantId, currentUser, empresas, usuarios, isInitialized: true });
 
@@ -235,16 +350,17 @@ export const useAccountingStore = create<AccountingState>()(
         await svc.signOut();
         set({
           currentUser: null, tenantId: null, isInitialized: true,
-          empresas: [], selectedEmpresaId: null, dadosPorEmpresa: {},
+          empresas: [], selectedEmpresaId: null,
+          competencias: [], selectedCompetencia: null, selectedCompetenciaStatus: null,
+          dadosPorChave: {},
           usuarios: [], contas: [], balanceteData: [], razaoData: [],
           importHistory: [], reconciledRazaoIndices: [],
-          companyInfo: { nome: '', cnpj: '', periodo: '', responsavel: '' },
+          companyInfo: { nome: '', cnpj: '', responsavel: '' },
         });
       },
 
       signUpTenant: async (params) => {
         await svc.createTenantAndAdmin(params);
-        // Faz login logo em seguida
         await get().login(params.email, params.password);
       },
 
@@ -254,78 +370,55 @@ export const useAccountingStore = create<AccountingState>()(
 
       setPrazoMedioRegularizacao: (dias) => set({ prazoMedioRegularizacao: dias }),
 
+      isCompetenciaReadonly: () => get().selectedCompetenciaStatus === 'CONCLUIDA',
+
       // ── Setters com sync ao Supabase ──────────────────────────────────────
 
       setCompanyInfo: (companyInfo) => set((state) => sync(state, { companyInfo })),
 
       setContas: (contas) => {
+        if (get().isCompetenciaReadonly()) return;
         set((state) => sync(state, { contas }));
-        const { tenantId, selectedEmpresaId, currentUser } = get();
-        if (tenantId && selectedEmpresaId) {
-          svc.upsertContas(tenantId, selectedEmpresaId, get().contas).catch((error) => {
-            logger.error('store/sync-contas-failed', {
-              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'upsertContas' },
-              error,
-            });
-          });
-        }
+        scopeWrite(get, ({ tenantId, empresaId, competencia }) =>
+          svc.upsertContas(tenantId, empresaId, competencia, get().contas), 'sync-contas');
       },
 
       updateConta: (numero, updates) => {
+        if (get().isCompetenciaReadonly()) return;
         set((state) => {
           const contas = state.contas.map((c) =>
             c.numero === numero ? { ...c, ...updates, updatedAt: new Date() } : c,
           );
           return sync(state, { contas });
         });
-        const { tenantId, selectedEmpresaId, currentUser } = get();
-        if (tenantId && selectedEmpresaId && updates.status) {
-          svc.updateContaStatus(selectedEmpresaId, numero, updates.status).catch((error) => {
-            logger.error('store/sync-conta-status-failed', {
-              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'updateContaStatus', data: { numero } },
-              error,
-            });
-          });
+        if (updates.status) {
+          const status = updates.status;
+          scopeWrite(get, ({ empresaId, competencia }) =>
+            svc.updateContaStatus(empresaId, competencia, numero, status), 'sync-conta-status', { numero });
         }
       },
 
       setBalanceteData: (balanceteData) => {
+        if (get().isCompetenciaReadonly()) return;
         set((state) => sync(state, { balanceteData }));
-        const { tenantId, selectedEmpresaId, currentUser } = get();
-        if (tenantId && selectedEmpresaId) {
-          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { balanceteData }).catch((error) => {
-            logger.error('store/sync-balancete-failed', {
-              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'upsertBalanceteData' },
-              error,
-            });
-          });
-        }
+        persistDados(get, { balanceteData }, 'sync-balancete');
       },
 
       setRazaoData: (razaoData) => {
+        if (get().isCompetenciaReadonly()) return;
         set((state) => sync(state, { razaoData }));
-        const { tenantId, selectedEmpresaId, currentUser } = get();
-        if (tenantId && selectedEmpresaId) {
-          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { razaoData }).catch((error) => {
-            logger.error('store/sync-razao-failed', {
-              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'upsertRazaoData' },
-              error,
-            });
-          });
-        }
+        persistDados(get, { razaoData }, 'sync-razao');
       },
 
       mergeRazaoData: (newRows) => {
+        if (get().isCompetenciaReadonly()) return { added: 0, duplicates: 0 };
         const existing = get().razaoData;
 
-        // Converte data para chave de dia (ignora hora/timezone)
         const dayKey = (d: Date | string): string => {
           const dt = d instanceof Date ? d : new Date(d as string);
           return isNaN(dt.getTime()) ? '' : `${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`;
         };
 
-        // Agrupa existentes por (conta|dia|debito|credito) para lookup eficiente
-        // → a maioria dos grupos terá 1 elemento; fuzzy só roda nesse subconjunto pequeno
         const existingByKey = new Map<string, RazaoRow[]>();
         for (const r of existing) {
           const k = `${r.conta}|${dayKey(r.data)}|${r.debito.toFixed(2)}|${r.credito.toFixed(2)}`;
@@ -333,15 +426,9 @@ export const useAccountingStore = create<AccountingState>()(
           if (arr) arr.push(r); else existingByKey.set(k, [r]);
         }
 
-        // Extrai sequências de 5+ dígitos do histórico (números de NF, lote, pedido…)
         const docNums = (text: string): Set<string> =>
           new Set((text.match(/\d{5,}/g) ?? []));
 
-        // Um lançamento novo é duplicata se:
-        //   1. Mesma conta + mesma data + mesmo débito + mesmo crédito (exato, ±0.01)
-        //   2. E histórico "é o mesmo" — verificado em duas etapas:
-        //      a) Se ambos têm números de documento (NF, lote…) mas NENHUM em comum → distintos
-        //      b) Caso contrário, score de similaridade de texto ≥ 0.75 confirma duplicata
         const isDuplicate = (r: RazaoRow): boolean => {
           const k = `${r.conta}|${dayKey(r.data)}|${r.debito.toFixed(2)}|${r.credito.toFixed(2)}`;
           const candidates = existingByKey.get(k);
@@ -349,12 +436,10 @@ export const useAccountingStore = create<AccountingState>()(
           return candidates.some((ex) => {
             const numsNew = docNums(r.historico);
             const numsEx  = docNums(ex.historico);
-            // Ambos têm números de documento mas sem interseção → lançamentos distintos
             if (numsNew.size > 0 && numsEx.size > 0) {
               const hasCommon = [...numsNew].some((n) => numsEx.has(n));
               if (!hasCommon) return false;
             }
-            // Sem números ou com número em comum → valida pela similaridade do texto
             return computeTextScore(r.historico, ex.historico).score >= 0.75;
           });
         };
@@ -365,134 +450,105 @@ export const useAccountingStore = create<AccountingState>()(
         if (toAdd.length > 0) {
           const razaoData = [...existing, ...toAdd];
           set((state) => sync(state, { razaoData }));
-          const { tenantId, selectedEmpresaId, currentUser } = get();
-          if (tenantId && selectedEmpresaId) {
-            svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { razaoData: get().razaoData }).catch((error) => {
-              logger.error('store/sync-razao-merge-failed', {
-                context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'mergeRazaoData' },
-                error,
-              });
-            });
-          }
+          persistDados(get, { razaoData: get().razaoData }, 'sync-razao-merge');
         }
 
         return { added: toAdd.length, duplicates };
       },
 
       addImportHistory: (history) => {
+        if (get().isCompetenciaReadonly()) return;
         set((state) => sync(state, { importHistory: [history, ...state.importHistory] }));
-        const { tenantId, selectedEmpresaId, currentUser } = get();
-        if (tenantId && selectedEmpresaId) {
-          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { importHistory: get().importHistory }).catch((error) => {
-            logger.error('store/sync-import-history-add-failed', {
-              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'addImportHistory' },
-              error,
-            });
-          });
-        }
+        persistDados(get, { importHistory: get().importHistory }, 'sync-import-history-add');
       },
 
       removeImportHistory: (id) => {
+        if (get().isCompetenciaReadonly()) return;
         set((state) => sync(state, { importHistory: state.importHistory.filter((h) => h.id !== id) }));
-        const { tenantId, selectedEmpresaId, currentUser } = get();
-        if (tenantId && selectedEmpresaId) {
-          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { importHistory: get().importHistory }).catch((error) => {
-            logger.error('store/sync-import-history-remove-failed', {
-              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'removeImportHistory' },
-              error,
-            });
-          });
-        }
+        persistDados(get, { importHistory: get().importHistory }, 'sync-import-history-remove');
       },
 
       clearImportHistory: () => {
+        if (get().isCompetenciaReadonly()) return;
         set((state) => sync(state, { importHistory: [] }));
-        const { tenantId, selectedEmpresaId, currentUser } = get();
-        if (tenantId && selectedEmpresaId) {
-          svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { importHistory: [] }).catch((error) => {
-            logger.error('store/sync-import-history-clear-failed', {
-              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'clearImportHistory' },
-              error,
-            });
-          });
-        }
+        persistDados(get, { importHistory: [] }, 'sync-import-history-clear');
       },
 
       resetEmpresaData: () => {
+        if (get().isCompetenciaReadonly()) return;
         const empty = { contas: [], balanceteData: [], razaoData: [], reconciledRazaoIndices: [], importHistory: [] };
         set((state) => sync(state, empty));
-        const { tenantId, selectedEmpresaId } = get();
-        if (tenantId && selectedEmpresaId) {
+        scopeWrite(get, ({ tenantId, empresaId, competencia }) =>
           Promise.all([
-            svc.upsertDadosEmpresa(tenantId, selectedEmpresaId, { balanceteData: [], razaoData: [], importHistory: [] }),
-            svc.upsertContas(tenantId, selectedEmpresaId, []),
-          ]).catch((error) => {
-            logger.error('store/sync-reset-empresa-failed', {
-              context: { tenantId, empresaId: selectedEmpresaId, userId: get().currentUser?.id, action: 'resetEmpresaData' },
-              error,
-            });
-          });
-        }
+            svc.upsertDadosEmpresa(tenantId, empresaId, competencia, { balanceteData: [], razaoData: [], reconciledIndices: [], importHistory: [] }),
+            svc.upsertContas(tenantId, empresaId, competencia, []),
+          ]), 'sync-reset-empresa');
       },
 
       reconcileAccount: (numero, status) => {
+        if (get().isCompetenciaReadonly()) return;
         set((state) => {
           const contas = state.contas.map((c) =>
             c.numero === numero ? { ...c, status, updatedAt: new Date() } : c,
           );
           return sync(state, { contas });
         });
-        const { tenantId, selectedEmpresaId, currentUser } = get();
-        if (tenantId && selectedEmpresaId) {
-          svc.updateContaStatus(selectedEmpresaId, numero, status).catch((error) => {
-            logger.error('store/sync-reconcile-account-failed', {
-              context: { tenantId, empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'reconcileAccount', data: { numero, status } },
-              error,
-            });
-          });
-        }
+        scopeWrite(get, ({ empresaId, competencia }) =>
+          svc.updateContaStatus(empresaId, competencia, numero, status), 'sync-reconcile-account', { numero, status });
       },
 
-      updateRazaoTransaction: (index, updates) =>
+      updateRazaoTransaction: (index, updates) => {
+        if (get().isCompetenciaReadonly()) return;
         set((state) => {
           const razaoData = [...state.razaoData];
           razaoData[index] = { ...razaoData[index], ...updates };
           return sync(state, { razaoData });
-        }),
+        });
+        persistDados(get, { razaoData: get().razaoData }, 'sync-update-razao');
+      },
 
-      deleteRazaoTransaction: (index) =>
+      deleteRazaoTransaction: (index) => {
+        if (get().isCompetenciaReadonly()) return;
         set((state) => {
           const razaoData = state.razaoData.filter((_, i) => i !== index);
           const reconciledRazaoIndices = state.reconciledRazaoIndices
             .filter((i) => i !== index)
             .map((i) => (i > index ? i - 1 : i));
           return sync(state, { razaoData, reconciledRazaoIndices });
-        }),
+        });
+        persistDados(get, { razaoData: get().razaoData, reconciledIndices: get().reconciledRazaoIndices }, 'sync-delete-razao');
+      },
 
-      reconcileRazaoTransactions: (indices) =>
+      reconcileRazaoTransactions: (indices) => {
+        if (get().isCompetenciaReadonly()) return;
         set((state) => {
           const reconciledRazaoIndices = [...new Set([...state.reconciledRazaoIndices, ...indices])];
           return sync(state, { reconciledRazaoIndices });
-        }),
+        });
+        persistDados(get, { reconciledIndices: get().reconciledRazaoIndices }, 'sync-reconcile-razao');
+      },
 
-      unreconcileRazaoTransactions: (indices) =>
+      unreconcileRazaoTransactions: (indices) => {
+        if (get().isCompetenciaReadonly()) return;
         set((state) => {
           const remove = new Set(indices);
           const reconciledRazaoIndices = state.reconciledRazaoIndices.filter((i) => !remove.has(i));
           return sync(state, { reconciledRazaoIndices });
-        }),
+        });
+        persistDados(get, { reconciledIndices: get().reconciledRazaoIndices }, 'sync-unreconcile-razao');
+      },
 
       logConciliacaoAuditoria: async ({ contaNumero, lancamentos, score, criterios }) => {
-        const { tenantId, selectedEmpresaId, currentUser } = get();
-        if (!tenantId || !selectedEmpresaId || !currentUser) return;
+        const { tenantId, selectedEmpresaId, selectedCompetencia, currentUser } = get();
+        if (!tenantId || !selectedEmpresaId || !selectedCompetencia || !currentUser) return;
         try {
           await svc.insertConciliacaoAuditoria({
-            tenantId, empresaId: selectedEmpresaId, contaNumero, lancamentos, score, criterios,
-            usuarioId: currentUser.id,
+            tenantId, empresaId: selectedEmpresaId, competencia: selectedCompetencia,
+            contaNumero, lancamentos, score, criterios, usuarioId: currentUser.id,
           });
         } catch (error) {
           logger.error('store/log-conciliacao-auditoria-failed', {
-            context: { tenantId: get().tenantId ?? undefined, empresaId: selectedEmpresaId ?? undefined, userId: currentUser.id, action: 'logConciliacaoAuditoria' },
+            context: { tenantId: tenantId ?? undefined, empresaId: selectedEmpresaId ?? undefined, userId: currentUser.id, action: 'logConciliacaoAuditoria' },
             error,
           });
         }
@@ -510,7 +566,6 @@ export const useAccountingStore = create<AccountingState>()(
           razaoSocial: dbEmpresa.razao_social,
           nomeFantasia: dbEmpresa.nome_fantasia ?? undefined,
           cnpj: dbEmpresa.cnpj ?? '',
-          periodo: dbEmpresa.periodo ?? '',
           responsavel: dbEmpresa.responsavel ?? '',
           email: dbEmpresa.email ?? undefined,
           telefone: dbEmpresa.telefone ?? undefined,
@@ -519,18 +574,11 @@ export const useAccountingStore = create<AccountingState>()(
           updatedAt: new Date(dbEmpresa.atualizado_em),
         };
 
-        set((state) => {
-          const isFirst = state.empresas.length === 0;
-          if (isFirst) {
-            return {
-              empresas: [nova],
-              selectedEmpresaId: nova.id,
-              dadosPorEmpresa: { [nova.id]: emptyDados },
-              companyInfo: { nome: nova.razaoSocial, cnpj: nova.cnpj, periodo: nova.periodo, responsavel: nova.responsavel },
-            };
-          }
-          return { empresas: [...state.empresas, nova] };
-        });
+        const isFirst = get().empresas.length === 0;
+        set((state) => ({ empresas: [...state.empresas, nova] }));
+        if (isFirst) {
+          await get().selectEmpresa(nova.id);
+        }
       },
 
       updateEmpresa: async (id, updates) => {
@@ -544,7 +592,6 @@ export const useAccountingStore = create<AccountingState>()(
               ? { companyInfo: {
                   nome: (updates.razaoSocial ?? state.empresas.find((e) => e.id === id)?.razaoSocial) ?? '',
                   cnpj: (updates.cnpj ?? state.empresas.find((e) => e.id === id)?.cnpj) ?? '',
-                  periodo: (updates.periodo ?? state.empresas.find((e) => e.id === id)?.periodo) ?? '',
                   responsavel: (updates.responsavel ?? state.empresas.find((e) => e.id === id)?.responsavel) ?? '',
                 } }
               : {};
@@ -554,31 +601,158 @@ export const useAccountingStore = create<AccountingState>()(
 
       deleteEmpresa: async (id) => {
         await svc.deleteEmpresaDb(id);
+        const wasSelected = get().selectedEmpresaId === id;
         set((state) => {
           const empresas = state.empresas.filter((e) => e.id !== id);
-          const { [id]: _r, ...restDados } = state.dadosPorEmpresa;
-          if (state.selectedEmpresaId === id) {
-            const proxima = empresas[0];
-            if (proxima) {
-              const dados = restDados[proxima.id] ?? emptyDados;
-              return { empresas, dadosPorEmpresa: restDados, selectedEmpresaId: proxima.id, ...dados,
-                companyInfo: { nome: proxima.razaoSocial, cnpj: proxima.cnpj, periodo: proxima.periodo, responsavel: proxima.responsavel } };
-            }
-            return { empresas, dadosPorEmpresa: restDados, selectedEmpresaId: null, ...emptyDados };
-          }
-          return { empresas, dadosPorEmpresa: restDados };
+          const dadosPorChave = Object.fromEntries(
+            Object.entries(state.dadosPorChave).filter(([k]) => !k.startsWith(`${id}::`)),
+          );
+          return { empresas, dadosPorChave };
         });
+        if (wasSelected) {
+          const proxima = get().empresas[0];
+          if (proxima) {
+            await get().selectEmpresa(proxima.id);
+          } else {
+            set({
+              selectedEmpresaId: null, selectedCompetencia: null, selectedCompetenciaStatus: null,
+              competencias: [], ...emptyDados,
+            });
+          }
+        }
       },
 
       selectEmpresa: async (id) => {
         const { tenantId } = get();
 
-        // Salva estado atual no cache local
+        // 1. Salva o escopo atual (empresa+competência anteriores) no cache local
+        get()._saveCurrentScope();
+
+        // 2. Define a empresa e limpa o escopo até carregar a competência (evita salvar dados errados)
+        const nova = get().empresas.find((e) => e.id === id);
+        const companyInfo = nova
+          ? { nome: nova.razaoSocial, cnpj: nova.cnpj, responsavel: nova.responsavel }
+          : emptyDados.companyInfo;
+        set({
+          selectedEmpresaId: id,
+          selectedCompetencia: null,
+          selectedCompetenciaStatus: null,
+          companyInfo,
+          contas: [], balanceteData: [], razaoData: [], importHistory: [], reconciledRazaoIndices: [],
+        });
+
+        // 3. Carrega as competências da empresa e garante a competência do mês corrente
+        let competencias: Competencia[] = [];
+        const alvo = currentCompetencia();
+        try {
+          if (tenantId) {
+            const rows = await svc.loadCompetencias(id);
+            competencias = rows.map(mapDbCompetencia);
+            if (!competencias.some((c) => c.competencia === alvo)) {
+              const created = await svc.ensureCompetencia(tenantId, id, alvo);
+              competencias = [mapDbCompetencia(created), ...competencias];
+            }
+          }
+        } catch (error) {
+          logger.warn('store/load-competencias-failed', {
+            context: { empresaId: id, userId: get().currentUser?.id, action: 'selectEmpresa' },
+            error,
+          });
+        }
+        set({ competencias });
+
+        // 4. Carrega o escopo da competência alvo (mês corrente)
+        await get()._loadScopeData(id, alvo);
+      },
+
+      // ── Competências ──────────────────────────────────────────────────────
+
+      selectCompetencia: async (competencia) => {
+        const { selectedEmpresaId } = get();
+        if (!selectedEmpresaId) return;
+        get()._saveCurrentScope();
+        await get()._loadScopeData(selectedEmpresaId, competencia);
+      },
+
+      criarCompetencia: async (competencia) => {
+        const { tenantId, selectedEmpresaId } = get();
+        if (!selectedEmpresaId) return;
+        if (tenantId) {
+          try {
+            const created = await svc.ensureCompetencia(tenantId, selectedEmpresaId, competencia);
+            set((state) => {
+              const rest = state.competencias.filter((c) => c.competencia !== competencia);
+              const merged = [mapDbCompetencia(created), ...rest]
+                .sort((a, b) => b.competencia.localeCompare(a.competencia));
+              return { competencias: merged };
+            });
+          } catch (error) {
+            logger.error('store/criar-competencia-failed', {
+              context: { empresaId: selectedEmpresaId, userId: get().currentUser?.id, action: 'criarCompetencia', data: { competencia } },
+              error,
+            });
+          }
+        }
+        await get().selectCompetencia(competencia);
+      },
+
+      concluirConciliacao: async () => {
+        const { tenantId, selectedEmpresaId, selectedCompetencia, currentUser } = get();
+        if (!tenantId || !selectedEmpresaId || !selectedCompetencia) return;
+        const kpis = get().calculateKPIs();
+        try {
+          await svc.updateCompetenciaStatus(selectedEmpresaId, selectedCompetencia, 'CONCLUIDA', {
+            concluidaPor: currentUser?.id ?? null, kpisSnapshot: kpis,
+          });
+          set((state) => ({
+            selectedCompetenciaStatus: 'CONCLUIDA',
+            competencias: state.competencias.map((c) =>
+              c.competencia === selectedCompetencia
+                ? { ...c, status: 'CONCLUIDA', concluidaEm: new Date(), concluidaPor: currentUser?.id, kpisSnapshot: kpis }
+                : c,
+            ),
+          }));
+        } catch (error) {
+          logger.error('store/concluir-conciliacao-failed', {
+            context: { empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'concluirConciliacao', data: { competencia: selectedCompetencia } },
+            error,
+          });
+          throw error;
+        }
+      },
+
+      reabrirCompetencia: async () => {
+        const { tenantId, selectedEmpresaId, selectedCompetencia, currentUser } = get();
+        if (!tenantId || !selectedEmpresaId || !selectedCompetencia) return;
+        try {
+          await svc.updateCompetenciaStatus(selectedEmpresaId, selectedCompetencia, 'EM_ANDAMENTO');
+          set((state) => ({
+            selectedCompetenciaStatus: 'EM_ANDAMENTO',
+            competencias: state.competencias.map((c) =>
+              c.competencia === selectedCompetencia
+                ? { ...c, status: 'EM_ANDAMENTO', concluidaEm: undefined, concluidaPor: undefined }
+                : c,
+            ),
+          }));
+        } catch (error) {
+          logger.error('store/reabrir-competencia-failed', {
+            context: { empresaId: selectedEmpresaId, userId: currentUser?.id, action: 'reabrirCompetencia', data: { competencia: selectedCompetencia } },
+            error,
+          });
+          throw error;
+        }
+      },
+
+      // ── Internos de escopo ─────────────────────────────────────────────────
+
+      _saveCurrentScope: () => {
         set((state) => {
-          const dadosAtualizados = {
-            ...state.dadosPorEmpresa,
-            ...(state.selectedEmpresaId ? {
-              [state.selectedEmpresaId]: {
+          if (!state.selectedEmpresaId || !state.selectedCompetencia) return {};
+          const key = scopeKey(state.selectedEmpresaId, state.selectedCompetencia);
+          return {
+            dadosPorChave: {
+              ...state.dadosPorChave,
+              [key]: {
                 companyInfo: state.companyInfo,
                 contas: state.contas,
                 balanceteData: state.balanceteData,
@@ -586,21 +760,25 @@ export const useAccountingStore = create<AccountingState>()(
                 importHistory: state.importHistory,
                 reconciledRazaoIndices: state.reconciledRazaoIndices,
               },
-            } : {}),
+            },
           };
-          return { dadosPorEmpresa: dadosAtualizados, selectedEmpresaId: id };
         });
+      },
 
-        const nova = get().empresas.find((e) => e.id === id);
-        const companyInfo = nova
-          ? { nome: nova.razaoSocial, cnpj: nova.cnpj, periodo: nova.periodo, responsavel: nova.responsavel }
-          : emptyDados.companyInfo;
+      _loadScopeData: async (empresaId, competencia) => {
+        const { tenantId } = get();
+        const status = get().competencias.find((c) => c.competencia === competencia)?.status ?? 'EM_ANDAMENTO';
+        set({ selectedCompetencia: competencia, selectedCompetenciaStatus: status });
 
-        // Carrega dados do Supabase
+        // Aguarda gravações pendentes deste escopo terminarem antes de reler do
+        // Supabase — evita corrida read-after-write (conciliação feita logo antes
+        // de trocar de competência poderia voltar desatualizada).
+        await awaitScopeWrites(scopeKey(empresaId, competencia));
+
         try {
           const [dbContas, dbDados] = await Promise.all([
-            tenantId ? svc.loadContas(id) : Promise.resolve([]),
-            tenantId ? svc.loadDadosEmpresa(id) : Promise.resolve(null),
+            tenantId ? svc.loadContas(empresaId, competencia) : Promise.resolve([]),
+            tenantId ? svc.loadDadosEmpresa(empresaId, competencia) : Promise.resolve(null),
           ]);
 
           const contas: Conta[] = dbContas.map((c) => ({
@@ -620,7 +798,6 @@ export const useAccountingStore = create<AccountingState>()(
           }));
 
           set({
-            companyInfo,
             contas,
             balanceteData: (dbDados?.balancete_data as BalanceteRow[]) ?? [],
             razaoData: (dbDados?.razao_data as RazaoRow[]) ?? [],
@@ -628,12 +805,18 @@ export const useAccountingStore = create<AccountingState>()(
             importHistory: (dbDados?.import_history as ImportHistory[]) ?? [],
           });
         } catch (error) {
-          logger.warn('store/select-empresa-supabase-failed-using-cache', {
-            context: { empresaId: id, userId: get().currentUser?.id, action: 'selectEmpresa' },
+          logger.warn('store/load-scope-supabase-failed-using-cache', {
+            context: { empresaId, userId: get().currentUser?.id, action: 'loadScopeData', data: { competencia } },
             error,
           });
-          const cached = get().dadosPorEmpresa[id] ?? emptyDados;
-          set({ companyInfo, ...cached });
+          const cached = get().dadosPorChave[scopeKey(empresaId, competencia)] ?? emptyDados;
+          set({
+            contas: cached.contas,
+            balanceteData: cached.balanceteData,
+            razaoData: cached.razaoData,
+            reconciledRazaoIndices: cached.reconciledRazaoIndices,
+            importHistory: cached.importHistory,
+          });
         }
       },
 
@@ -651,7 +834,6 @@ export const useAccountingStore = create<AccountingState>()(
           permissoes: u.permissoes,
         });
 
-        // Adiciona ao cache local como "pendente" (sem ID de auth ainda)
         const pendingUser: Usuario = {
           id: convite.id,
           nome: u.nome,
@@ -696,30 +878,72 @@ export const useAccountingStore = create<AccountingState>()(
 
       // ── KPIs ──────────────────────────────────────────────────────────────
 
-      calculateKPIs: () => {
-        const { contas, balanceteData, razaoData } = get();
-        let effectiveContas = contas;
-        if (contas.length === 0 && balanceteData.length > 0) {
-          effectiveContas = balanceteData.map((balancete) => {
-            const movimentacoes = razaoData
-              .filter((r) => r.conta.trim() === balancete.codigo.trim())
-              .map((r, i) => ({
-                id: `${balancete.codigo}-${i}`,
-                data: r.data, lote: r.lote, historico: r.historico,
-                debito: r.debito, credito: r.credito, saldoExercicio: r.saldoExercicio,
-              }));
-            const composicao = movimentacoes.reduce(
-              (acc, m) => balancete.natureza === 'ATIVO' ? acc + m.debito - m.credito : acc + m.credito - m.debito, 0,
-            );
+      // Deriva as contas a partir de balancete + razão + conciliados — MESMA regra
+      // da tela de Status (processedContas). Composição = saldo corrido considerando
+      // apenas lançamentos NÃO conciliados; status recalculado pela diferença.
+      // Garante que Dashboard e Status mostrem sempre o mesmo estado.
+      getProcessedContas: () => {
+        const { contas, balanceteData, razaoData, reconciledRazaoIndices } = get();
+        if (balanceteData.length === 0) return contas;
+
+        const reconciledSet = new Set(reconciledRazaoIndices);
+
+        // Índices O(1): agrupa lançamentos do razão por conta e mapeia contas
+        // persistidas por número — evita a varredura O(contas × razão) que
+        // congelava a UI em competências com muitos lançamentos.
+        const movsByConta = new Map<string, { debito: number; credito: number; idx: number }[]>();
+        razaoData.forEach((razao, globalIdx) => {
+          const key = (razao.conta ?? '').trim();
+          if (!key) return;
+          const item = { debito: razao.debito, credito: razao.credito, idx: globalIdx };
+          const arr = movsByConta.get(key);
+          if (arr) arr.push(item); else movsByConta.set(key, [item]);
+        });
+        const storedByNumero = new Map(contas.map((c) => [c.numero, c]));
+
+        return balanceteData
+          .filter((balancete) => Math.abs(balancete.saldoAtual) >= 0.01)
+          .map((balancete) => {
+            const stored = storedByNumero.get(balancete.codigo);
+            let saldoPendente = 0;
+            const movs = movsByConta.get(balancete.codigo.trim()) ?? [];
+            for (const m of movs) {
+              if (!reconciledSet.has(m.idx)) {
+                saldoPendente += balancete.natureza === 'ATIVO'
+                  ? m.debito - m.credito
+                  : m.credito - m.debito;
+              }
+            }
+            const composicao = saldoPendente;
             const diferenca = Math.abs(balancete.saldoAtual) - Math.abs(composicao);
+            // Contas bancárias e aplicações financeiras são conciliadas pelo
+            // extrato bancário, fora do sistema — entram sempre como CONCILIADAS.
+            const bancaria = isContaBancariaOuAplicacao(balancete.codigo, balancete.descricao);
+            const status: Conta['status'] = bancaria || Math.abs(diferenca) < 0.01
+              ? 'CONCILIADO'
+              : stored?.status === 'EM_ANALISE'
+                ? 'EM_ANALISE'
+                : 'NAO_CONCILIADO';
             return {
-              numero: balancete.codigo, descricao: balancete.descricao, natureza: balancete.natureza,
-              contabilidade: balancete.saldoAtual, composicao, diferenca,
-              status: (Math.abs(diferenca) < 0.01 ? 'CONCILIADO' : 'NAO_CONCILIADO') as Conta['status'],
-              documentos: [], movimentacoes, createdAt: new Date(), updatedAt: new Date(),
-            };
+              numero: balancete.codigo,
+              descricao: balancete.descricao,
+              natureza: balancete.natureza,
+              contabilidade: balancete.saldoAtual,
+              composicao,
+              diferenca,
+              status,
+              conciliadoPorRegra: bancaria,
+              documentos: stored?.documentos ?? [],
+              prazoRegularizacao: stored?.prazoRegularizacao,
+              movimentacoes: [],
+              createdAt: stored?.createdAt ?? new Date(),
+              updatedAt: stored?.updatedAt ?? new Date(),
+            } as Conta;
           });
-        }
+      },
+
+      calculateKPIs: () => {
+        const effectiveContas = get().getProcessedContas();
         const totalContas = effectiveContas.length;
         const contasConciliadas = effectiveContas.filter((c) => c.status === 'CONCILIADO').length;
         const contasAlerta = effectiveContas.filter((c) => c.prazoRegularizacao && new Date() > c.prazoRegularizacao).length;
@@ -732,12 +956,16 @@ export const useAccountingStore = create<AccountingState>()(
       },
     }),
     {
-      name: 'accounting-store',
+      name: 'accounting-store-v3',
       storage: createJSONStorage(() => localStorage),
-      // Persiste apenas UI state leve — dados críticos vêm do Supabase
+      // Persiste APENAS estado de UI leve. Os dados (balancete/razão/contas) vêm sempre
+      // do Supabase via _loadScopeData; NÃO persistimos `dadosPorChave` no localStorage —
+      // ele guardava o balancete+razão de todas as competências visitadas e era
+      // re-serializado a cada set(), o que congelava a UI (e podia estourar a cota de
+      // ~5MB do localStorage). Ele continua em memória durante a sessão como fallback.
       partialize: (state) => ({
         selectedEmpresaId: state.selectedEmpresaId,
-        dadosPorEmpresa: state.dadosPorEmpresa, // cache offline
+        selectedCompetencia: state.selectedCompetencia,
         prazoMedioRegularizacao: state.prazoMedioRegularizacao,
       }),
     },

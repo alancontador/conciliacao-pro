@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useAccountingStore } from '@/store/accounting';
 import { logger } from '@/lib/logger';
 import { parseXlsxInWorker } from '@/lib/parse-xlsx';
+import { formatCompetencia } from '@/lib/competencia';
 import { CheckCircle, FileSpreadsheet } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -375,7 +376,8 @@ export function ImportRazao() {
   const endIdx = Math.min(startIdx + pageSize, previewData.length);
   const pageRows = useMemo(() => previewData.slice(startIdx, endIdx), [previewData, startIdx, endIdx]);
 
-  const { mergeRazaoData, addImportHistory, currentUser, selectedEmpresaId } = useAccountingStore();
+  const { mergeRazaoData, addImportHistory, currentUser, selectedEmpresaId, selectedCompetencia, isCompetenciaReadonly } = useAccountingStore();
+  const readOnly = isCompetenciaReadonly();
   const { toast } = useToast();
   const log = logger.withContext({ userId: currentUser?.id, empresaId: selectedEmpresaId ?? undefined, action: 'import-razao' });
 
@@ -417,6 +419,14 @@ export function ImportRazao() {
 
   const handleImport = async () => {
     if (!file || !importStats) return;
+    if (readOnly) {
+      toast({
+        title: 'Competência concluída',
+        description: 'Reabra a competência no seletor "Período de análise" para importar dados.',
+        variant: 'destructive',
+      });
+      return;
+    }
     try {
       setIsLoading(true);
       const isCsv = file.name.toLowerCase().endsWith('.csv');
@@ -475,8 +485,20 @@ export function ImportRazao() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-foreground">Importar Razão</h1>
-        <p className="text-muted-foreground">Importe as movimentações do razão contábil a partir de arquivos Excel (.xlsx, .xls)</p>
+        <p className="text-muted-foreground">
+          Importe as movimentações do razão contábil a partir de arquivos Excel (.xlsx, .xls)
+          {selectedCompetencia && <> — competência <strong>{formatCompetencia(selectedCompetencia)}</strong></>}
+        </p>
       </div>
+
+      {readOnly && (
+        <Alert className="border-amber-400 bg-amber-50 dark:bg-amber-950/40">
+          <AlertDescription className="text-amber-800 dark:text-amber-200">
+            A competência {formatCompetencia(selectedCompetencia ?? '')} está concluída (somente leitura). Reabra-a no
+            seletor <strong>Período de análise</strong> para importar dados.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardHeader>
@@ -592,7 +614,7 @@ export function ImportRazao() {
             </div>
 
             <div className="flex justify-end mt-4">
-              <Button onClick={handleImport} disabled={isLoading} className="min-w-32">
+              <Button onClick={handleImport} disabled={isLoading || readOnly} className="min-w-32">
                 {isLoading ? 'Importando...' : 'Confirmar Importação'}
               </Button>
             </div>

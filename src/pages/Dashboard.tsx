@@ -25,10 +25,11 @@ import { cn } from '@/lib/utils';
 
 export function Dashboard() {
   const {
-    contas, balanceteData, calculateKPIs,
+    balanceteData, calculateKPIs, getProcessedContas,
     prazoMedioRegularizacao, setPrazoMedioRegularizacao,
   } = useAccountingStore();
   const kpis = calculateKPIs();
+  const processedContas = getProcessedContas();
 
   const [editingPrazo, setEditingPrazo] = useState(false);
   const [prazoInput, setPrazoInput] = useState('');
@@ -39,7 +40,7 @@ export function Dashboard() {
     emAnalise: kpis.totalContas - kpis.contasConciliadas - kpis.contasPendentes,
   };
 
-  const hasData = contas.length > 0 || balanceteData.length > 0;
+  const hasData = processedContas.length > 0 || balanceteData.length > 0;
 
   const startEditPrazo = () => {
     setPrazoInput(String(prazoMedioRegularizacao));
@@ -282,13 +283,13 @@ export function Dashboard() {
             <CardDescription>Contas que requerem atenção imediata</CardDescription>
           </CardHeader>
           <CardContent>
-            {contas.length === 0 && balanceteData.length > 0 ? (
+            {processedContas.length === 0 ? (
               <p className="text-center text-muted-foreground py-8 text-sm">
-                Acesse <strong>Status das Contas</strong> para ver os detalhes
+                Importe o balancete e o razão para ver os detalhes
               </p>
             ) : (
               <div className="space-y-2">
-                {contas
+                {processedContas
                   .filter(
                     (c) =>
                       c.status !== 'CONCILIADO' ||
@@ -325,14 +326,14 @@ export function Dashboard() {
                     </div>
                   ))}
 
-                {contas.filter((c) => c.status !== 'CONCILIADO').length === 0 && contas.length > 0 && (
+                {processedContas.filter((c) => c.status !== 'CONCILIADO').length === 0 && processedContas.length > 0 && (
                   <div className="flex items-center justify-center gap-2 text-[hsl(var(--success))] py-6">
                     <CheckCircle className="w-5 h-5" />
                     <span className="text-sm font-medium">Todas as contas estão conciliadas!</span>
                   </div>
                 )}
 
-                {contas.filter((c) => c.status !== 'CONCILIADO').length > 5 && (
+                {processedContas.filter((c) => c.status !== 'CONCILIADO').length > 5 && (
                   <Link
                     to="/status"
                     className="flex items-center gap-1 text-xs text-primary hover:underline mt-2 pt-1"

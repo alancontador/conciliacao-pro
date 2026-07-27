@@ -75,7 +75,6 @@ export interface ImportHistory {
 export interface CompanyInfo {
   nome: string;
   cnpj: string;
-  periodo: string;
   responsavel: string;
 }
 

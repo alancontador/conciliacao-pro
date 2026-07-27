@@ -210,10 +210,6 @@ export function Settings() {
                 <p className="font-medium">{selectedEmpresa.cnpj || '—'}</p>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Período</p>
-                <p className="font-medium">{selectedEmpresa.periodo || '—'}</p>
-              </div>
-              <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Responsável</p>
                 <p className="font-medium">{selectedEmpresa.responsavel || '—'}</p>
               </div>
