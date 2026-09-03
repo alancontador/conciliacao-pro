@@ -1,5 +1,6 @@
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
+import { SupportWidget } from '@/components/support/SupportWidget';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -17,6 +18,8 @@ export function Layout({ children }: LayoutProps) {
           {children}
         </main>
       </div>
+
+      <SupportWidget />
     </div>
   );
 }

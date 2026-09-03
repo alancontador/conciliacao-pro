@@ -4,7 +4,14 @@ import type { MatchReasons } from '@/lib/reconciliation/types';
 // Lê variáveis injetadas em runtime (Docker) ou em build time (Vite dev)
 declare global {
   interface Window {
-    __env?: { VITE_SUPABASE_URL?: string; VITE_SUPABASE_ANON_KEY?: string };
+    __env?: {
+      VITE_SUPABASE_URL?: string;
+      VITE_SUPABASE_ANON_KEY?: string;
+      /** Contato do suporte exibido na Central de Ajuda (ver support-content.ts). */
+      VITE_SUPORTE_WHATSAPP?: string;
+      VITE_SUPORTE_EMAIL?: string;
+      VITE_SUPORTE_HORARIO?: string;
+    };
   }
 }
 
