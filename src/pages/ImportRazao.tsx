@@ -397,7 +397,7 @@ export function ImportRazao() {
       } else {
         const buf = await selectedFile.arrayBuffer();
         const parsed = await parseXlsxInWorker(buf, { blankrows: false });
-        if (!parsed.ok) throw new Error(parsed.error);
+        if (parsed.ok === false) throw new Error(parsed.error);
         ({ rows, totalRaw } = processWorkbook(parsed.rawData as any[][]));
       }
 
@@ -439,7 +439,7 @@ export function ImportRazao() {
       } else {
         const buf = await file.arrayBuffer();
         const parsed = await parseXlsxInWorker(buf, { blankrows: false });
-        if (!parsed.ok) throw new Error(parsed.error);
+        if (parsed.ok === false) throw new Error(parsed.error);
         ({ rows, totalRaw } = processWorkbook(parsed.rawData as any[][]));
       }
 

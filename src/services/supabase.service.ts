@@ -21,9 +21,14 @@ export async function getSession() {
 }
 
 export async function resetPasswordForEmail(email: string) {
-  return supabase.auth.resetPasswordForEmail(email, {
+  // O erro do Supabase precisa ser propagado: sem isso a UI mostrava
+  // "e-mail enviado" mesmo quando o envio era recusado (limite do SMTP
+  // padrao, redirect nao autorizado, etc.) e o usuario ficava esperando uma
+  // mensagem que nunca chegaria.
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
     redirectTo: `${window.location.origin}/reset-password`,
   });
+  if (error) throw error;
 }
 
 export async function updatePassword(newPassword: string) {
@@ -129,6 +134,18 @@ export async function loadUsuarios(tenantId: string): Promise<DbProfile[]> {
   return data ?? [];
 }
 
+/** Convites ainda nao aceitos e nao expirados do escritorio. */
+export async function loadConvitesPendentes(tenantId: string): Promise<DbConvite[]> {
+  const { data } = await supabase
+    .from('convites')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('aceito', false)
+    .gt('expires_at', new Date().toISOString())
+    .order('criado_em');
+  return data ?? [];
+}
+
 export async function createConvite(params: {
   tenantId: string;
   email: string;
@@ -167,43 +184,100 @@ export async function deleteProfile(id: string) {
 
 // ── Convites ─────────────────────────────────────────────────────────────────
 
-export async function loadConviteByToken(token: string): Promise<DbConvite | null> {
-  const { data } = await supabase
-    .from('convites')
-    .select('*')
-    .eq('token', token)
-    .eq('aceito', false)
-    .single();
-  return data;
+export interface ConviteInfo {
+  email: string;
+  nome: string;
+  role: string;
+  expires_at: string;
+  aceito: boolean;
 }
 
-export async function aceitarConvite(token: string, nome: string, password: string): Promise<void> {
-  // 1. Busca o convite
-  const convite = await loadConviteByToken(token);
-  if (!convite) throw new Error('Convite inválido ou expirado');
-  if (new Date(convite.expires_at) < new Date()) throw new Error('Convite expirado');
+/**
+ * Lê o convite pelo token via RPC `convite_por_token` (SECURITY DEFINER).
+ * A tabela `convites` não é mais legível pelo cliente anônimo — antes uma
+ * policy `using (true)` expunha e-mail e token de TODOS os escritórios.
+ */
+export async function loadConviteByToken(token: string): Promise<ConviteInfo | null> {
+  const { data, error } = await supabase.rpc('convite_por_token', { p_token: token });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return (row as ConviteInfo | undefined) ?? null;
+}
 
-  // 2. Cria conta no Supabase Auth
-  const { data: authData, error: authError } = await supabase.auth.signUp({
+/** Mapeia os erros da RPC para mensagens que o usuário entende. */
+function mensagemDoErroDeConvite(raw: string): string {
+  if (raw.includes('convite_invalido')) return 'Convite inválido. Peça um novo link ao administrador.';
+  if (raw.includes('convite_expirado')) return 'Convite expirado. Peça um novo link ao administrador.';
+  if (raw.includes('email_divergente')) return 'Este link foi enviado para outro e-mail. Peça um convite para o seu e-mail.';
+  if (raw.includes('nao_autenticado')) return 'Não foi possível iniciar a sessão. Tente novamente.';
+  return raw;
+}
+
+/**
+ * Aceita o convite: cria a conta no Auth (ou entra na já existente) e cria o
+ * profile vinculado ao escritório via RPC `aceitar_convite`.
+ *
+ * O passo do profile é feito por RPC SECURITY DEFINER e é idempotente: se uma
+ * tentativa anterior criou o usuário no Auth mas falhou depois, repetir o
+ * processo com a mesma senha conclui o cadastro em vez de travar em
+ * "User already registered".
+ */
+export async function aceitarConvite(token: string, nome: string, password: string): Promise<void> {
+  const convite = await loadConviteByToken(token);
+  if (!convite) throw new Error('Convite inválido. Peça um novo link ao administrador.');
+  if (new Date(convite.expires_at) < new Date()) {
+    throw new Error('Convite expirado. Peça um novo link ao administrador.');
+  }
+
+  // 1. Cria a conta no Auth. Se já existe (retry de uma tentativa que falhou
+  //    depois do signUp), entra com a senha informada em vez de falhar.
+  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
     email: convite.email,
     password,
   });
-  if (authError || !authData.user) throw authError ?? new Error('Erro ao criar conta');
 
-  // 3. Cria o profile
-  const { error: profileError } = await supabase.from('profiles').insert({
-    id: authData.user.id,
-    tenant_id: convite.tenant_id,
-    nome,
-    email: convite.email,
-    role: convite.role,
-    status: 'ativo',
-    permissoes: convite.permissoes,
+  let session = signUpData?.session ?? null;
+
+  if (signUpError) {
+    const jaExiste = /already registered|already been registered|user_already_exists/i.test(signUpError.message);
+    if (!jaExiste) throw signUpError;
+
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+      email: convite.email,
+      password,
+    });
+    if (signInError || !signInData.session) {
+      throw new Error(
+        'Já existe uma conta com este e-mail e a senha informada não confere. '
+        + 'Use "Esqueci minha senha" na tela de login, ou informe aqui a senha que você já cadastrou.',
+      );
+    }
+    session = signInData.session;
+  }
+
+  // 2. Sem sessão o profile não pode ser criado (o signUp não devolve sessão
+  //    quando a confirmação de e-mail está ligada no projeto Supabase).
+  if (!session) {
+    const { data: signInData } = await supabase.auth.signInWithPassword({
+      email: convite.email,
+      password,
+    });
+    session = signInData?.session ?? null;
+  }
+  if (!session) {
+    throw new Error(
+      'Sua conta foi criada, mas o projeto exige confirmação de e-mail. '
+      + 'Confirme o e-mail recebido e acesse este mesmo link novamente '
+      + '(ou peça ao administrador para desativar "Confirm email" no Supabase).',
+    );
+  }
+
+  // 3. Cria/atualiza o profile e marca o convite como aceito (RPC idempotente).
+  const { error: rpcError } = await supabase.rpc('aceitar_convite', {
+    p_token: token,
+    p_nome: nome,
   });
-  if (profileError) throw profileError;
-
-  // 4. Marca convite como aceito
-  await supabase.from('convites').update({ aceito: true }).eq('token', token);
+  if (rpcError) throw new Error(mensagemDoErroDeConvite(rpcError.message));
 }
 
 // ── Empresas ──────────────────────────────────────────────────────────────────

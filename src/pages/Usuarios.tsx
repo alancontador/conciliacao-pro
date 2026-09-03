@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
+import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { UserPlus, Pencil, Trash2, Search, ShieldCheck, ShieldX, KeyRound, Copy, Check, Link2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -153,6 +154,23 @@ export function Usuarios() {
       toast({ title: 'E-mail não disponível', variant: 'destructive' });
       return;
     }
+
+    // Convidado que ainda não aceitou não tem conta no Auth: o Supabase não
+    // envia e-mail de recuperação para e-mail inexistente (e não avisa, para
+    // não permitir descobrir quem tem conta). Reabrimos o link do convite.
+    if (u.convitePendente) {
+      if (u.conviteToken) {
+        setInviteLink(`${window.location.origin}/aceitar-convite?token=${u.conviteToken}`);
+      } else {
+        toast({
+          title: 'Convite ainda não aceito',
+          description: 'Exclua e crie o convite novamente para gerar um novo link.',
+          variant: 'destructive',
+        });
+      }
+      return;
+    }
+
     try {
       await requestPasswordReset_user(u.email);
       toast({ title: 'E-mail de recuperação enviado', description: `Link enviado para ${u.email}` });
@@ -161,7 +179,11 @@ export function Usuarios() {
         context: { userId: currentUser?.id, action: 'requestPasswordReset_user' },
         error: err,
       });
-      toast({ title: 'Erro ao enviar e-mail', variant: 'destructive' });
+      toast({
+        title: 'Erro ao enviar e-mail',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      });
     }
   };
 
@@ -277,16 +299,22 @@ export function Usuarios() {
 
                     {/* Status toggle — somente admin/gerente altera */}
                     <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={u.status === 'ativo'}
-                          onCheckedChange={() => canManage && handleToggleStatus(u)}
-                          disabled={!canManage}
-                        />
-                        <span className="text-xs text-muted-foreground">
-                          {u.status === 'ativo' ? 'Ativo' : 'Inativo'}
-                        </span>
-                      </div>
+                      {u.convitePendente ? (
+                        <Badge variant="outline" className="border-amber-400 text-amber-700 dark:text-amber-300">
+                          Convite pendente
+                        </Badge>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={u.status === 'ativo'}
+                            onCheckedChange={() => canManage && handleToggleStatus(u)}
+                            disabled={!canManage}
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            {u.status === 'ativo' ? 'Ativo' : 'Inativo'}
+                          </span>
+                        </div>
+                      )}
                     </TableCell>
 
                     {/* Data */}
@@ -312,9 +340,13 @@ export function Usuarios() {
                             size="sm"
                             className="h-8 w-8 p-0 text-amber-600 hover:text-amber-700"
                             onClick={() => handleRenovarSenha(u)}
-                            title="Enviar e-mail para renovar senha"
+                            title={u.convitePendente
+                              ? 'Convite pendente — ver link de cadastro'
+                              : 'Enviar e-mail para renovar senha'}
                           >
-                            <KeyRound className="w-4 h-4" />
+                            {u.convitePendente
+                              ? <Link2 className="w-4 h-4" />
+                              : <KeyRound className="w-4 h-4" />}
                           </Button>
                           <Button
                             variant="ghost"

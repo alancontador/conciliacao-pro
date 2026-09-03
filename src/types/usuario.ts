@@ -15,6 +15,10 @@ export interface Usuario {
   id: string;
   nome: string;
   email: string;
+  /** Convidado que ainda nao criou a conta: existe em `convites`, nao em `profiles`. */
+  convitePendente?: boolean;
+  /** Token do convite pendente, para reenviar o link de cadastro. */
+  conviteToken?: string;
   senhaHash?: string;
   role: UsuarioRole;
   status: UsuarioStatus;

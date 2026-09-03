@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Building2, Lock, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { loadConviteByToken, aceitarConvite } from '@/services/supabase.service';
-import type { DbConvite } from '@/lib/supabase';
+import type { ConviteInfo } from '@/services/supabase.service';
 
 export function AceitarConvite() {
   const [params] = useSearchParams();
@@ -16,7 +16,7 @@ export function AceitarConvite() {
 
   const token = params.get('token') ?? '';
 
-  const [convite, setConvite] = useState<DbConvite | null>(null);
+  const [convite, setConvite] = useState<ConviteInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [invalid, setInvalid] = useState(false);
   const [done, setDone] = useState(false);

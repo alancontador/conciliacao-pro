@@ -262,7 +262,7 @@ export function ImportBalancete() {
       // Parse em Web Worker — main thread permanece responsivo mesmo para arquivos de 13MB+
       const parsed = await parseXlsxInWorker(arrayBuffer);
 
-      if (!parsed.ok) {
+      if (parsed.ok === false) {
         const msg = parsed.error === 'no-sheet'
           ? 'Arquivo não pôde ser lido. Abra-o no Excel, salve como .xlsx e tente novamente.'
           : 'Erro ao processar o arquivo. Verifique se está no formato correto.';
@@ -328,7 +328,7 @@ export function ImportBalancete() {
       const arrayBuffer = await file.arrayBuffer();
       const parsed = await parseXlsxInWorker(arrayBuffer);
 
-      if (!parsed.ok) {
+      if (parsed.ok === false) {
         toast({
           title: 'Arquivo não suportado',
           description: 'Abra-o no Excel, salve como .xlsx e tente novamente.',

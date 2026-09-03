@@ -161,7 +161,7 @@ interface AccountingState {
   _loadScopeData: (empresaId: string, competencia: string) => Promise<void>;
 
   // Usuários
-  addUsuario: (u: Omit<Usuario, 'id' | 'createdAt' | 'updatedAt'>, email: string) => Promise<string>;
+  addUsuario: (u: Omit<Usuario, 'id' | 'createdAt' | 'updatedAt' | 'email'>, email: string) => Promise<string>;
   updateUsuario: (id: string, updates: Partial<Omit<Usuario, 'id' | 'createdAt'>>) => Promise<void>;
   deleteUsuario: (id: string) => Promise<void>;
   requestPasswordReset_user: (email: string) => Promise<void>;
@@ -286,9 +286,10 @@ export const useAccountingStore = create<AccountingState>()(
             updatedAt: new Date(profile.atualizado_em),
           };
 
-          const [dbEmpresas, dbUsuarios] = await Promise.all([
+          const [dbEmpresas, dbUsuarios, dbConvites] = await Promise.all([
             svc.loadEmpresas(tenantId),
             svc.loadUsuarios(tenantId),
+            svc.loadConvitesPendentes(tenantId),
           ]);
 
           const empresas: Empresa[] = dbEmpresas.map((e) => ({
@@ -314,6 +315,26 @@ export const useAccountingStore = create<AccountingState>()(
             createdAt: new Date(p.criado_em),
             updatedAt: new Date(p.atualizado_em),
           }));
+
+          // Convidados que ainda nao criaram a conta aparecem na lista como
+          // pendentes — antes existiam so em memoria e sumiam ao recarregar,
+          // deixando o admin sem como reenviar o link.
+          const emailsComConta = new Set(usuarios.map((u) => u.email.toLowerCase()));
+          for (const c of dbConvites) {
+            if (emailsComConta.has(c.email.toLowerCase())) continue;
+            usuarios.push({
+              id: c.id,
+              nome: c.nome,
+              email: c.email,
+              role: c.role as Usuario['role'],
+              status: 'ativo',
+              permissoes: c.permissoes as unknown as PermissoesUsuario,
+              convitePendente: true,
+              conviteToken: c.token,
+              createdAt: new Date(c.criado_em),
+              updatedAt: new Date(c.criado_em),
+            });
+          }
 
           const { selectedEmpresaId } = get();
           const primeiraEmpresa = empresas.find((e) => e.ativa);
@@ -841,6 +862,8 @@ export const useAccountingStore = create<AccountingState>()(
           role: u.role,
           status: 'ativo',
           permissoes: u.permissoes,
+          convitePendente: true,
+          conviteToken: convite.token,
           createdAt: new Date(convite.criado_em),
           updatedAt: new Date(convite.criado_em),
         };
@@ -854,7 +877,7 @@ export const useAccountingStore = create<AccountingState>()(
           nome: updates.nome,
           role: updates.role,
           status: updates.status,
-          permissoes: updates.permissoes,
+          permissoes: updates.permissoes as unknown as Record<string, boolean>,
         });
         set((state) => ({
           usuarios: state.usuarios.map((u) =>
