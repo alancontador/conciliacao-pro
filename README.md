@@ -60,14 +60,23 @@ This project is built with:
 - shadcn-ui
 - Tailwind CSS
 
-## How can I deploy this project?
+## Deploy
 
-Simply open [Lovable](https://lovable.dev/projects/79756d55-e8f3-4a96-a0d6-a9d3832a9ffd) and click on Share -> Publish.
+Hospedado no **EasyPanel** (VPS Hostinger):
+`https://conciliacao-pro-conciliacao-pro.kid1rw.easypanel.host/`
 
-## Can I connect a custom domain to my Lovable project?
+O deploy é **automático**: um webhook no GitHub chama a URL de deploy do
+EasyPanel a cada push na `main`, que refaz o build do Dockerfile
+(Node 20 Alpine -> Nginx Alpine) e republica o serviço.
 
-Yes, you can!
+- Acompanhar o build: EasyPanel -> projeto `conciliacao-pro` -> Implantações
+- Publicar à mão (se o webhook falhar): botão **Implantar** no mesmo painel
+- Entregas do webhook: GitHub -> Settings -> Webhooks -> Recent Deliveries
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+As variáveis `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` são injetadas em
+runtime pelo `docker-entrypoint.sh` (arquivo `public/env-config.js`), não no
+build — trocar a chave não exige rebuild, só reiniciar o serviço.
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+> Observação: o projeto foi criado no Lovable, mas está **desvinculado** dele.
+> Não usar o fluxo de publicação do Lovable.
+
