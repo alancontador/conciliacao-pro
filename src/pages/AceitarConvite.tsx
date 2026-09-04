@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Building2, Lock, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
+import { Building2, Lock, Eye, EyeOff, CheckCircle2, XCircle, MailCheck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { loadConviteByToken, aceitarConvite } from '@/services/supabase.service';
 import type { ConviteInfo } from '@/services/supabase.service';
@@ -20,6 +20,7 @@ export function AceitarConvite() {
   const [loading, setLoading] = useState(true);
   const [invalid, setInvalid] = useState(false);
   const [done, setDone] = useState(false);
+  const [precisaConfirmar, setPrecisaConfirmar] = useState(false);
 
   const [nome, setNome] = useState('');
   const [password, setPassword] = useState('');
@@ -43,8 +44,9 @@ export function AceitarConvite() {
     if (password !== password2) { toast({ title: 'As senhas não coincidem', variant: 'destructive' }); return; }
     setSaving(true);
     try {
-      await aceitarConvite(token, nome.trim(), password);
-      setDone(true);
+      const resultado = await aceitarConvite(token, nome.trim(), password);
+      if (resultado === 'confirme-email') setPrecisaConfirmar(true);
+      else setDone(true);
     } catch (err: unknown) {
       toast({ title: err instanceof Error ? err.message : 'Erro ao aceitar convite', variant: 'destructive' });
     } finally {
@@ -54,6 +56,33 @@ export function AceitarConvite() {
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center"><p className="text-muted-foreground">Verificando convite...</p></div>;
+  }
+
+  if (precisaConfirmar) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-background to-muted flex items-center justify-center p-4">
+        <Card className="w-full max-w-md text-center">
+          <CardContent className="pt-10 pb-8 space-y-4">
+            <MailCheck className="w-16 h-16 text-primary mx-auto" />
+            <h2 className="text-xl font-bold">Confirme seu e-mail</h2>
+            <p className="text-muted-foreground text-sm">
+              Sua conta foi criada. Enviamos um link de confirmação para{' '}
+              <strong>{convite?.email}</strong>.
+            </p>
+            <p className="text-muted-foreground text-sm">
+              Clique no link do e-mail e depois faça login com a senha que você acabou
+              de cadastrar — seu acesso ao escritório já estará liberado.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Não achou? Verifique a caixa de spam.
+            </p>
+            <Button className="w-full" onClick={() => navigate('/login', { replace: true })}>
+              Ir para o login
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   if (done) {

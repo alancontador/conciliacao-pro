@@ -48,6 +48,7 @@ export async function createTenantAndAdmin(params: {
   const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
     email: params.email,
     password: params.password,
+    options: { emailRedirectTo: `${window.location.origin}/login` },
   });
 
   let session = signUpData?.session;
@@ -66,14 +67,24 @@ export async function createTenantAndAdmin(params: {
     userId = signInData.user.id;
   }
 
-  // Se signUp funcionou mas sem sessão, faz login para obter sessão
+  // Se signUp funcionou mas sem sessão, tenta login para obtê-la.
   if (!session) {
     const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
       email: params.email,
       password: params.password,
     });
+
+    // Confirmação de e-mail ligada: a conta existe mas ainda não pode
+    // autenticar. Guarda os dados do escritório para criá-lo no primeiro
+    // login — antes isso lançava erro e a conta ficava órfã, sem tenant.
     if (signInError || !signInData.session) {
-      throw new Error('Confirme seu e-mail antes de continuar.');
+      await supabase.from('signups_pendentes').upsert({
+        email: params.email.toLowerCase(),
+        tenant_nome: params.tenantNome,
+        tenant_cnpj: params.tenantCnpj ?? '',
+        admin_nome: params.adminNome,
+      });
+      return { status: 'confirme-email' as const, userId: userId ?? '', tenantId: '' };
     }
     session = signInData.session;
     userId = signInData.user!.id;
@@ -109,7 +120,11 @@ export async function createTenantAndAdmin(params: {
   // Salva email no profile do admin (a RPC não recebe o email)
   await supabase.from('profiles').update({ email: params.email }).eq('id', userId);
 
-  return { userId, tenantId: (rpcData as { tenant_id: string }).tenant_id };
+  return {
+    status: 'ok' as const,
+    userId,
+    tenantId: (rpcData as { tenant_id: string }).tenant_id,
+  };
 }
 
 // ── Profile (usuário logado) ──────────────────────────────────────────────────
@@ -222,7 +237,13 @@ function mensagemDoErroDeConvite(raw: string): string {
  * processo com a mesma senha conclui o cadastro em vez de travar em
  * "User already registered".
  */
-export async function aceitarConvite(token: string, nome: string, password: string): Promise<void> {
+export type ResultadoCadastro = 'ok' | 'confirme-email';
+
+export async function aceitarConvite(
+  token: string,
+  nome: string,
+  password: string,
+): Promise<ResultadoCadastro> {
   const convite = await loadConviteByToken(token);
   if (!convite) throw new Error('Convite inválido. Peça um novo link ao administrador.');
   if (new Date(convite.expires_at) < new Date()) {
@@ -234,6 +255,7 @@ export async function aceitarConvite(token: string, nome: string, password: stri
   const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
     email: convite.email,
     password,
+    options: { emailRedirectTo: `${window.location.origin}/login` },
   });
 
   let session = signUpData?.session ?? null;
@@ -246,7 +268,18 @@ export async function aceitarConvite(token: string, nome: string, password: stri
       email: convite.email,
       password,
     });
-    if (signInError || !signInData.session) {
+
+    if (signInError) {
+      // Conta criada numa tentativa anterior e ainda não confirmada: reenvia
+      // o e-mail de confirmação em vez de acusar senha errada.
+      if (/email not confirmed|not_confirmed/i.test(signInError.message)) {
+        await supabase.auth.resend({
+          type: 'signup',
+          email: convite.email,
+          options: { emailRedirectTo: `${window.location.origin}/login` },
+        });
+        return 'confirme-email';
+      }
       throw new Error(
         'Já existe uma conta com este e-mail e a senha informada não confere. '
         + 'Use "Esqueci minha senha" na tela de login, ou informe aqui a senha que você já cadastrou.',
@@ -255,8 +288,9 @@ export async function aceitarConvite(token: string, nome: string, password: stri
     session = signInData.session;
   }
 
-  // 2. Sem sessão o profile não pode ser criado (o signUp não devolve sessão
-  //    quando a confirmação de e-mail está ligada no projeto Supabase).
+  // 2. Com "Confirm email" ligado o signUp não devolve sessão. A conta já
+  //    existe e o convite continua válido — o vínculo com o escritório é
+  //    criado no primeiro login (ver finalizarCadastroPendente).
   if (!session) {
     const { data: signInData } = await supabase.auth.signInWithPassword({
       email: convite.email,
@@ -264,13 +298,7 @@ export async function aceitarConvite(token: string, nome: string, password: stri
     });
     session = signInData?.session ?? null;
   }
-  if (!session) {
-    throw new Error(
-      'Sua conta foi criada, mas o projeto exige confirmação de e-mail. '
-      + 'Confirme o e-mail recebido e acesse este mesmo link novamente '
-      + '(ou peça ao administrador para desativar "Confirm email" no Supabase).',
-    );
-  }
+  if (!session) return 'confirme-email';
 
   // 3. Cria/atualiza o profile e marca o convite como aceito (RPC idempotente).
   const { error: rpcError } = await supabase.rpc('aceitar_convite', {
@@ -278,6 +306,23 @@ export async function aceitarConvite(token: string, nome: string, password: stri
     p_nome: nome,
   });
   if (rpcError) throw new Error(mensagemDoErroDeConvite(rpcError.message));
+  return 'ok';
+}
+
+/**
+ * Conclui um cadastro que ficou pendente de confirmação de e-mail. Roda no
+ * primeiro login, quando já existe sessão: aceita o convite endereçado a este
+ * e-mail, ou cria o escritório registrado em `signups_pendentes`.
+ * Retorna true se o profile passou a existir.
+ */
+export async function finalizarCadastroPendente(): Promise<boolean> {
+  const { data: token } = await supabase.rpc('meu_convite_pendente');
+  if (token) {
+    const { error } = await supabase.rpc('aceitar_convite', { p_token: token, p_nome: '' });
+    if (!error) return true;
+  }
+  const { data: tenantId } = await supabase.rpc('finalizar_signup_pendente');
+  return Boolean(tenantId);
 }
 
 // ── Empresas ──────────────────────────────────────────────────────────────────

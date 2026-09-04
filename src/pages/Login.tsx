@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Building2, Lock, Mail, Eye, EyeOff, UserPlus, KeyRound, Phone } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { logger } from '@/lib/logger';
+import { supabase } from '@/lib/supabase';
 
 const formatCnpj = (v: string): string => {
   const d = v.replace(/\D/g, '').slice(0, 14);
@@ -62,6 +63,18 @@ export function Login() {
       navigate('/', { replace: true });
     } else if (result === 'inactive') {
       toast({ title: 'Usuário inativo', description: 'Entre em contato com o administrador.', variant: 'destructive' });
+    } else if (result === 'confirme-email') {
+      // Senha certa, e-mail ainda não confirmado: reenvia o link em vez de
+      // dizer "senha incorreta", que confundia o usuário.
+      await supabase.auth.resend({
+        type: 'signup',
+        email: email.trim(),
+        options: { emailRedirectTo: `${window.location.origin}/login` },
+      });
+      toast({
+        title: 'Confirme seu e-mail',
+        description: `Reenviamos o link de confirmação para ${email.trim()}. Verifique também a caixa de spam.`,
+      });
     } else {
       toast({ title: 'E-mail ou senha incorretos', variant: 'destructive' });
     }
@@ -91,15 +104,23 @@ export function Login() {
     }
     setLoading(true);
     try {
-      await signUpTenant({
+      const res = await signUpTenant({
         tenantNome: tenantNome.trim(),
         tenantCnpj: tenantCnpj.trim() || undefined,
         adminNome: adminNome.trim(),
         email: signupEmail.trim(),
         password: signupPass,
       });
-      toast({ title: 'Escritório criado! Bem-vindo ao ConciliaçãoPRO.' });
-      navigate('/', { replace: true });
+      if (res === 'confirme-email') {
+        toast({
+          title: 'Confirme seu e-mail',
+          description: `Enviamos um link para ${signupEmail.trim()}. Após confirmar, faça login e seu escritório será criado automaticamente.`,
+        });
+        setTab('login');
+      } else {
+        toast({ title: 'Escritório criado! Bem-vindo ao ConciliaçãoPRO.' });
+        navigate('/', { replace: true });
+      }
     } catch (err: unknown) {
       logger.error('auth/signup-failed', { error: err, context: { action: 'signUpTenant' } });
       const msg = err instanceof Error ? err.message : 'Erro ao criar conta';

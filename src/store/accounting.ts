@@ -113,9 +113,9 @@ interface AccountingState {
   loadTenantData: (tenantId: string, userId: string) => Promise<void>;
 
   // Auth via Supabase
-  login: (email: string, password: string) => Promise<'ok' | 'invalid' | 'inactive'>;
+  login: (email: string, password: string) => Promise<'ok' | 'invalid' | 'inactive' | 'confirme-email'>;
   logout: () => Promise<void>;
-  signUpTenant: (params: { tenantNome: string; tenantCnpj?: string; adminNome: string; email: string; password: string }) => Promise<void>;
+  signUpTenant: (params: { tenantNome: string; tenantCnpj?: string; adminNome: string; email: string; password: string }) => Promise<'ok' | 'confirme-email'>;
   requestPasswordReset: (email: string) => Promise<void>;
 
   // Setters de dados (sincronizam com Supabase em background)
@@ -271,7 +271,15 @@ export const useAccountingStore = create<AccountingState>()(
 
       loadTenantData: async (_tenantId, userId) => {
         try {
-          const profile = await svc.loadMyProfile();
+          let profile = await svc.loadMyProfile();
+
+          // Sessão válida sem profile = cadastro que parou na confirmação de
+          // e-mail. Conclui aqui também (ex.: usuário volta pelo link do e-mail).
+          if (!profile) {
+            const concluiu = await svc.finalizarCadastroPendente();
+            if (concluiu) profile = await svc.loadMyProfile();
+          }
+
           if (!profile) { set({ isInitialized: true }); return; }
 
           const tenantId = profile.tenant_id;
@@ -357,9 +365,24 @@ export const useAccountingStore = create<AccountingState>()(
 
       login: async (email, password) => {
         const { data, error } = await svc.signIn(email, password);
-        if (error || !data.user) return 'invalid';
+        if (error || !data.user) {
+          // Com "Confirm email" ligado, senha certa + e-mail não confirmado
+          // cai aqui: precisa de mensagem própria, não "usuário ou senha".
+          if (error && /email not confirmed|not_confirmed/i.test(error.message)) {
+            return 'confirme-email';
+          }
+          return 'invalid';
+        }
 
-        const profile = await svc.loadMyProfile();
+        let profile = await svc.loadMyProfile();
+
+        // Cadastro interrompido pela confirmação de e-mail: agora há sessão,
+        // então concluímos o vínculo (convite aceito ou escritório criado).
+        if (!profile) {
+          const concluiu = await svc.finalizarCadastroPendente();
+          if (concluiu) profile = await svc.loadMyProfile();
+        }
+
         if (!profile) return 'invalid';
         if (profile.status === 'inativo') return 'inactive';
 
@@ -381,8 +404,10 @@ export const useAccountingStore = create<AccountingState>()(
       },
 
       signUpTenant: async (params) => {
-        await svc.createTenantAndAdmin(params);
+        const res = await svc.createTenantAndAdmin(params);
+        if (res.status === 'confirme-email') return 'confirme-email';
         await get().login(params.email, params.password);
+        return 'ok';
       },
 
       requestPasswordReset: async (email) => {
