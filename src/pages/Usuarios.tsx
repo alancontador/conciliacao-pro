@@ -43,7 +43,7 @@ const EMPTY_FORM = {
 };
 
 export function Usuarios() {
-  const { usuarios, currentUser, addUsuario, updateUsuario, deleteUsuario, requestPasswordReset_user } =
+  const { usuarios, currentUser, addUsuario, updateUsuario, deleteUsuario, requestPasswordReset_user, reenviarConvite } =
     useAccountingStore();
   const { toast } = useToast();
 
@@ -56,6 +56,8 @@ export function Usuarios() {
   const [form, setForm] = useState({ ...EMPTY_FORM, permissoes: { ...EMPTY_FORM.permissoes } });
   const [saving, setSaving] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState<string | null>(null);
+  const [emailEnviado, setEmailEnviado] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
   const filtered = usuarios.filter(
@@ -115,14 +117,15 @@ export function Usuarios() {
         });
         toast({ title: 'Usuário atualizado' });
       } else {
-        const token = await addUsuario({
+        const { token, emailEnviado: enviado } = await addUsuario({
           nome: form.nome.trim(),
           role: form.role,
           status: form.status,
           permissoes: form.permissoes,
         }, form.email.trim());
-        const url = `${window.location.origin}/aceitar-convite?token=${token}`;
-        setInviteLink(url);
+        setInviteLink(`${window.location.origin}/aceitar-convite?token=${token}`);
+        setInviteEmail(form.email.trim());
+        setEmailEnviado(enviado);
       }
     } catch (err: unknown) {
       logger.error('usuarios/save-failed', {
@@ -160,7 +163,10 @@ export function Usuarios() {
     // não permitir descobrir quem tem conta). Reabrimos o link do convite.
     if (u.convitePendente) {
       if (u.conviteToken) {
+        const enviado = await reenviarConvite(u.email, u.conviteToken);
         setInviteLink(`${window.location.origin}/aceitar-convite?token=${u.conviteToken}`);
+        setInviteEmail(u.email);
+        setEmailEnviado(enviado);
       } else {
         toast({
           title: 'Convite ainda não aceito',
@@ -341,7 +347,7 @@ export function Usuarios() {
                             className="h-8 w-8 p-0 text-amber-600 hover:text-amber-700"
                             onClick={() => handleRenovarSenha(u)}
                             title={u.convitePendente
-                              ? 'Convite pendente — ver link de cadastro'
+                              ? 'Reenviar convite por e-mail'
                               : 'Enviar e-mail para renovar senha'}
                           >
                             {u.convitePendente
@@ -477,15 +483,17 @@ export function Usuarios() {
       </Dialog>
 
       {/* Dialog link de convite */}
-      <Dialog open={!!inviteLink} onOpenChange={(open) => { if (!open) { setInviteLink(null); setCopiedLink(false); } }}>
+      <Dialog open={!!inviteLink} onOpenChange={(open) => { if (!open) { setInviteLink(null); setInviteEmail(null); setEmailEnviado(false); setCopiedLink(false); } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Link2 className="w-5 h-5 text-primary" />
-              Convite criado com sucesso
+              {emailEnviado ? 'Convite enviado por e-mail' : 'Convite criado'}
             </DialogTitle>
             <DialogDescription>
-              Envie o link abaixo para o usuário. Ao clicar, ele criará a própria senha e já ficará vinculado ao seu escritório.
+              {emailEnviado
+                ? `Enviamos o convite para ${inviteEmail}. Ao clicar no link do e-mail, a pessoa define a senha e já entra no escritório. Se preferir, o link abaixo faz o mesmo.`
+                : 'Não foi possível enviar o e-mail automaticamente — envie o link abaixo para o usuário. Ao clicar, ele criará a própria senha e já ficará vinculado ao seu escritório.'}
             </DialogDescription>
           </DialogHeader>
 

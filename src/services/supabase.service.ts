@@ -161,6 +161,33 @@ export async function loadConvitesPendentes(tenantId: string): Promise<DbConvite
   return data ?? [];
 }
 
+/**
+ * Envia o convite por e-mail usando o próprio Auth do Supabase (magic link),
+ * que já sai pelo SMTP configurado no projeto.
+ *
+ * Por que não uma Edge Function: exigiria implantar função + guardar segredo
+ * de SMTP, um caminho novo e não testado. Este usa exatamente o canal de
+ * e-mail que já está comprovadamente funcionando (o mesmo do "esqueci minha
+ * senha"), sem infraestrutura adicional.
+ *
+ * O link do e-mail leva à página de aceite do convite já autenticado; lá a
+ * pessoa define nome e senha. Não altera a sessão de quem convidou: o
+ * signInWithOtp apenas dispara o e-mail.
+ *
+ * Devolve false se o envio falhar — a tela continua mostrando o link para
+ * envio manual, então o convite nunca fica travado por causa do e-mail.
+ */
+export async function enviarConvitePorEmail(email: string, token: string): Promise<boolean> {
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: true,
+      emailRedirectTo: `${window.location.origin}/aceitar-convite?token=${token}`,
+    },
+  });
+  return !error;
+}
+
 export async function createConvite(params: {
   tenantId: string;
   email: string;
@@ -307,6 +334,26 @@ export async function aceitarConvite(
   });
   if (rpcError) throw new Error(mensagemDoErroDeConvite(rpcError.message));
   return 'ok';
+}
+
+/**
+ * Caminho de quem chegou pelo link do e-mail de convite: a sessão já existe
+ * (magic link), então não há signUp — apenas define a senha e vincula o
+ * profile ao escritório.
+ */
+export async function definirSenhaEAceitarConvite(
+  token: string,
+  nome: string,
+  password: string,
+): Promise<void> {
+  const { error: senhaError } = await supabase.auth.updateUser({ password });
+  if (senhaError) throw senhaError;
+
+  const { error: rpcError } = await supabase.rpc('aceitar_convite', {
+    p_token: token,
+    p_nome: nome,
+  });
+  if (rpcError) throw new Error(mensagemDoErroDeConvite(rpcError.message));
 }
 
 /**

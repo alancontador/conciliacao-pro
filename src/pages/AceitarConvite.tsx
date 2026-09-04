@@ -6,7 +6,8 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Building2, Lock, Eye, EyeOff, CheckCircle2, XCircle, MailCheck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { loadConviteByToken, aceitarConvite } from '@/services/supabase.service';
+import { loadConviteByToken, aceitarConvite, definirSenhaEAceitarConvite } from '@/services/supabase.service';
+import { supabase } from '@/lib/supabase';
 import type { ConviteInfo } from '@/services/supabase.service';
 
 export function AceitarConvite() {
@@ -21,6 +22,9 @@ export function AceitarConvite() {
   const [invalid, setInvalid] = useState(false);
   const [done, setDone] = useState(false);
   const [precisaConfirmar, setPrecisaConfirmar] = useState(false);
+  // Quem chega pelo link do e-mail de convite já vem autenticado (magic link):
+  // basta definir a senha, sem criar conta de novo.
+  const [temSessao, setTemSessao] = useState(false);
 
   const [nome, setNome] = useState('');
   const [password, setPassword] = useState('');
@@ -30,11 +34,14 @@ export function AceitarConvite() {
 
   useEffect(() => {
     if (!token) { setInvalid(true); setLoading(false); return; }
-    loadConviteByToken(token).then((c) => {
-      if (!c || new Date(c.expires_at) < new Date()) setInvalid(true);
-      else { setConvite(c); setNome(c.nome); }
-      setLoading(false);
-    });
+    Promise.all([loadConviteByToken(token), supabase.auth.getSession()])
+      .then(([c, { data }]) => {
+        if (!c || new Date(c.expires_at) < new Date()) setInvalid(true);
+        else { setConvite(c); setNome(c.nome); }
+        setTemSessao(Boolean(data.session));
+        setLoading(false);
+      })
+      .catch(() => { setInvalid(true); setLoading(false); });
   }, [token]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -44,9 +51,15 @@ export function AceitarConvite() {
     if (password !== password2) { toast({ title: 'As senhas não coincidem', variant: 'destructive' }); return; }
     setSaving(true);
     try {
-      const resultado = await aceitarConvite(token, nome.trim(), password);
-      if (resultado === 'confirme-email') setPrecisaConfirmar(true);
-      else setDone(true);
+      if (temSessao) {
+        // Veio pelo e-mail de convite: já autenticado, só falta a senha.
+        await definirSenhaEAceitarConvite(token, nome.trim(), password);
+        setDone(true);
+      } else {
+        const resultado = await aceitarConvite(token, nome.trim(), password);
+        if (resultado === 'confirme-email') setPrecisaConfirmar(true);
+        else setDone(true);
+      }
     } catch (err: unknown) {
       toast({ title: err instanceof Error ? err.message : 'Erro ao aceitar convite', variant: 'destructive' });
     } finally {

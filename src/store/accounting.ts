@@ -161,10 +161,11 @@ interface AccountingState {
   _loadScopeData: (empresaId: string, competencia: string) => Promise<void>;
 
   // Usuários
-  addUsuario: (u: Omit<Usuario, 'id' | 'createdAt' | 'updatedAt' | 'email'>, email: string) => Promise<string>;
+  addUsuario: (u: Omit<Usuario, 'id' | 'createdAt' | 'updatedAt' | 'email'>, email: string) => Promise<{ token: string; emailEnviado: boolean }>;
   updateUsuario: (id: string, updates: Partial<Omit<Usuario, 'id' | 'createdAt'>>) => Promise<void>;
   deleteUsuario: (id: string) => Promise<void>;
   requestPasswordReset_user: (email: string) => Promise<void>;
+  reenviarConvite: (email: string, token: string) => Promise<boolean>;
 }
 
 // ── Fila de gravações por escopo ──────────────────────────────────────────────
@@ -894,8 +895,14 @@ export const useAccountingStore = create<AccountingState>()(
         };
         set((state) => ({ usuarios: [...state.usuarios, pendingUser] }));
 
-        return convite.token;
+        // Envia o convite por e-mail. Falha aqui não invalida o convite: a
+        // tela mostra o link para envio manual como alternativa.
+        const emailEnviado = await svc.enviarConvitePorEmail(email, convite.token);
+
+        return { token: convite.token, emailEnviado };
       },
+
+      reenviarConvite: async (email, token) => svc.enviarConvitePorEmail(email, token),
 
       updateUsuario: async (id, updates) => {
         await svc.updateProfile(id, {
