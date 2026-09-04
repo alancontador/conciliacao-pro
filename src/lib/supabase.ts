@@ -18,8 +18,16 @@ declare global {
 const url = window.__env?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL || '';
 const key = window.__env?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
+// flowType 'implicit' (e não 'pkce') porque os links de e-mail deste sistema
+// quase sempre são abertos em OUTRO navegador:
+//   • o convite é disparado do navegador do ADMIN e aberto pelo convidado
+//   • o admin pede recuperação de senha para um usuário
+//   • a pessoa pede no computador e abre o e-mail no celular
+// No PKCE o link só funciona no mesmo navegador que originou o pedido (o
+// code_verifier fica no localStorage de quem pediu), então a troca do código
+// por sessão falhava silenciosamente e a pessoa ficava sem conseguir entrar.
 export const supabase = createClient(url || 'https://placeholder.supabase.co', key || 'placeholder', {
-  auth: { flowType: 'pkce' },
+  auth: { flowType: 'implicit' },
 });
 
 // ── Tipos das tabelas ──────────────────────────────────────────────────────────

@@ -280,7 +280,7 @@ function mensagemDoErroDeConvite(raw: string): string {
  * processo com a mesma senha conclui o cadastro em vez de travar em
  * "User already registered".
  */
-export type ResultadoCadastro = 'ok' | 'confirme-email';
+export type ResultadoCadastro = 'ok' | 'confirme-email' | 'conta-existente';
 
 export async function aceitarConvite(
   token: string,
@@ -298,10 +298,23 @@ export async function aceitarConvite(
   const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
     email: convite.email,
     password,
-    options: { emailRedirectTo: `${window.location.origin}/login` },
+    options: { emailRedirectTo: `${window.location.origin}/aceitar-convite?token=${token}` },
   });
 
   let session = signUpData?.session ?? null;
+
+  // Conta já existente: por proteção contra enumeração de usuários, o Supabase
+  // NÃO devolve erro nesse caso — devolve um user com `identities` vazio e sem
+  // sessão. Sem tratar isso, a senha digitada era descartada em silêncio e a
+  // pessoa só descobria no login ("e-mail ou senha incorretos").
+  if (!signUpError && !session && (signUpData?.user?.identities?.length ?? 1) === 0) {
+    const { data: signInData } = await supabase.auth.signInWithPassword({
+      email: convite.email,
+      password,
+    });
+    if (!signInData?.session) return 'conta-existente';
+    session = signInData.session;
+  }
 
   if (signUpError) {
     const jaExiste = /already registered|already been registered|user_already_exists/i.test(signUpError.message);
@@ -341,7 +354,16 @@ export async function aceitarConvite(
     });
     session = signInData?.session ?? null;
   }
-  if (!session) return 'confirme-email';
+  if (!session) {
+    // Só anuncia "confirme seu e-mail" se o reenvio realmente sair; caso
+    // contrário a pessoa esperaria por um e-mail que nunca foi enviado.
+    const { error: resendError } = await supabase.auth.resend({
+      type: 'signup',
+      email: convite.email,
+      options: { emailRedirectTo: `${window.location.origin}/aceitar-convite?token=${token}` },
+    });
+    return resendError ? 'conta-existente' : 'confirme-email';
+  }
 
   // 3. Cria/atualiza o profile e marca o convite como aceito (RPC idempotente).
   const { error: rpcError } = await supabase.rpc('aceitar_convite', {

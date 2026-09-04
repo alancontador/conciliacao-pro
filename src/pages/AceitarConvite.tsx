@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Building2, Lock, Eye, EyeOff, CheckCircle2, XCircle, MailCheck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { loadConviteByToken, aceitarConvite, definirSenhaEAceitarConvite } from '@/services/supabase.service';
+import { loadConviteByToken, aceitarConvite, definirSenhaEAceitarConvite, resetPasswordForEmail } from '@/services/supabase.service';
 import { supabase } from '@/lib/supabase';
 import type { ConviteInfo } from '@/services/supabase.service';
 
@@ -25,6 +25,7 @@ export function AceitarConvite() {
   // Quem chega pelo link do e-mail de convite já vem autenticado (magic link):
   // basta definir a senha, sem criar conta de novo.
   const [temSessao, setTemSessao] = useState(false);
+  const [contaExistente, setContaExistente] = useState(false);
 
   const [nome, setNome] = useState('');
   const [password, setPassword] = useState('');
@@ -44,6 +45,15 @@ export function AceitarConvite() {
       .catch(() => { setInvalid(true); setLoading(false); });
   }, [token]);
 
+  // O link do e-mail traz a sessão no fragmento da URL, e o supabase-js a
+  // processa de forma assíncrona — o getSession() acima pode rodar antes disso.
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((_evento, session) => {
+      if (session) setTemSessao(true);
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nome.trim()) { toast({ title: 'Informe seu nome', variant: 'destructive' }); return; }
@@ -58,6 +68,7 @@ export function AceitarConvite() {
       } else {
         const resultado = await aceitarConvite(token, nome.trim(), password);
         if (resultado === 'confirme-email') setPrecisaConfirmar(true);
+        else if (resultado === 'conta-existente') setContaExistente(true);
         else setDone(true);
       }
     } catch (err: unknown) {
@@ -69,6 +80,45 @@ export function AceitarConvite() {
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center"><p className="text-muted-foreground">Verificando convite...</p></div>;
+  }
+
+  if (contaExistente) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-background to-muted flex items-center justify-center p-4">
+        <Card className="w-full max-w-md text-center">
+          <CardContent className="pt-10 pb-8 space-y-4">
+            <MailCheck className="w-16 h-16 text-primary mx-auto" />
+            <h2 className="text-xl font-bold">Sua conta já foi criada</h2>
+            <p className="text-muted-foreground text-sm">
+              Falta apenas definir a senha. Vamos enviar um código para{' '}
+              <strong>{convite?.email}</strong> — com ele você cria a senha e entra.
+            </p>
+            <Button
+              className="w-full"
+              disabled={saving}
+              onClick={async () => {
+                setSaving(true);
+                try {
+                  await resetPasswordForEmail(convite?.email ?? '');
+                  toast({ title: 'Código enviado', description: 'Verifique seu e-mail (e a caixa de spam).' });
+                  navigate(`/reset-password?email=${encodeURIComponent(convite?.email ?? '')}`, { replace: true });
+                } catch (err: unknown) {
+                  toast({
+                    title: 'Não foi possível enviar',
+                    description: err instanceof Error ? err.message : undefined,
+                    variant: 'destructive',
+                  });
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              {saving ? 'Enviando...' : 'Receber código para definir a senha'}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   if (precisaConfirmar) {

@@ -43,8 +43,17 @@ export function ResetPassword() {
       return;
     }
 
-    // Padrão: exibir formulário de código OTP
-    setMode('otp');
+    // Fluxo implícito: o link do e-mail traz a sessão no fragmento da URL e o
+    // supabase-js a processa de forma assíncrona. Com sessão ativa a pessoa já
+    // está autenticada — pedir o código aqui seria um beco sem saída.
+    supabase.auth.getSession().then(({ data }) => {
+      setMode(data.session ? 'form' : 'otp');
+    });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_evento, session) => {
+      if (session) setMode('form');
+    });
+    return () => sub.subscription.unsubscribe();
   }, [codeFromUrl]);
 
   const handleOtpSubmit = async (e: React.FormEvent) => {
