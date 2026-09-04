@@ -548,9 +548,15 @@ export function Usuarios() {
       <AlertDialog open={!!deleteId} onOpenChange={(open) => { if (!open) setDeleteId(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Excluir usuário?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {usuarios.find((u) => u.id === deleteId)?.convitePendente
+                ? 'Cancelar convite?'
+                : 'Excluir usuário?'}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Esta ação não pode ser desfeita. O usuário será removido permanentemente.
+              {usuarios.find((u) => u.id === deleteId)?.convitePendente
+                ? 'O convite será cancelado e o link enviado deixará de funcionar. Você pode convidar a pessoa novamente depois.'
+                : 'Esta ação não pode ser desfeita. O usuário será removido permanentemente.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

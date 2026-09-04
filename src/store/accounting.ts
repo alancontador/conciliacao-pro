@@ -923,7 +923,27 @@ export const useAccountingStore = create<AccountingState>()(
       },
 
       deleteUsuario: async (id) => {
-        await svc.deleteProfile(id);
+        const { usuarios, tenantId } = get();
+        const alvo = usuarios.find((u) => u.id === id);
+
+        if (alvo?.convitePendente) {
+          // Convidado que ainda não criou a conta não tem profile: o registro
+          // dele vive em `convites` e o id da lista é o id do convite. Apagar
+          // em `profiles` não atingia nada e ele voltava no próximo reload.
+          await svc.deleteConvite(id);
+        } else {
+          await svc.deleteProfile(id);
+          // Se sobrou convite pendente para o mesmo e-mail, some com ele
+          // também — senão o usuário excluído reaparece como pendente.
+          if (alvo?.email && tenantId) {
+            try {
+              await svc.deleteConvitesPorEmail(tenantId, alvo.email);
+            } catch (error) {
+              logger.warn('usuarios/delete-convites-failed', { error, data: { email: alvo.email } });
+            }
+          }
+        }
+
         set((state) => ({ usuarios: state.usuarios.filter((u) => u.id !== id) }));
       },
 

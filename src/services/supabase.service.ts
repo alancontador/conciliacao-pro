@@ -218,6 +218,22 @@ export async function updateProfile(
   if (error) throw error;
 }
 
+/** Remove um convite (por id) — usado ao excluir um convidado que ainda não aceitou. */
+export async function deleteConvite(id: string) {
+  const { error } = await supabase.from('convites').delete().eq('id', id);
+  if (error) throw error;
+}
+
+/** Remove convites pendentes de um e-mail, para não ressuscitarem na lista. */
+export async function deleteConvitesPorEmail(tenantId: string, email: string) {
+  const { error } = await supabase
+    .from('convites')
+    .delete()
+    .eq('tenant_id', tenantId)
+    .ilike('email', email);
+  if (error) throw error;
+}
+
 export async function deleteProfile(id: string) {
   // Deleta o profile (o auth.users é deletado em cascata pelo Supabase ou manualmente)
   const { error } = await supabase.from('profiles').delete().eq('id', id);
